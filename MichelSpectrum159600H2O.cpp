@@ -359,20 +359,20 @@ int main(int argc, char *argv[]) {
     TH1D* h_veto_panel[10];
     const char* veto_names[10] = {
         "Top Veto Panel 12", "Top Veto Panel 13",
-        "Wide Side Veto Panel 14", "Wide Side Veto Panel 15",
-        "Wide Side Veto Panel 16", "Wide Side Veto Panel 17",
-        "Thin Side Veto Panel 18", "Thin Side Veto Panel 19",
-        "Thin Side Veto Panel 20", "Thin Side Veto Panel 21"
+        "Side Veto Panel 14", "Side Veto Panel 15",
+        "Side Veto Panel 16", "Side Veto Panel 17",
+        "Side Veto Panel 18", "Side Veto Panel 19",
+        "Side Veto Panel 20", "Side Veto Panel 21"
     };
     
     // Initialize veto panel histograms
     for (int i = 0; i < 10; i++) {
         if (i < 2) { // Top veto panels (12-13)
             h_veto_panel[i] = new TH1D(Form("h_veto_panel_%d", i+12),
-                Form("%s;Energy (ADC);Counts", veto_names[i]), 200, 0, 2000);
+                Form("%s;Energy (ADC);Counts", veto_names[i]), 200, 0, 6000);
         } else if (i < 6) { // Wide side veto panels (14-17)
             h_veto_panel[i] = new TH1D(Form("h_veto_panel_%d", i+12),
-                Form("%s;Energy (ADC);Counts", veto_names[i]), 200, 0, 8000);
+                Form("%s;Energy (ADC);Counts", veto_names[i]), 200, 0, 6000);
         } else { // Thin side veto panels (18-21)
             h_veto_panel[i] = new TH1D(Form("h_veto_panel_%d", i+12),
                 Form("%s;Energy (ADC);Counts", veto_names[i]), 200, 0, 4000);
