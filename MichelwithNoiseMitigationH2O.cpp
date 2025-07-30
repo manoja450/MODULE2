@@ -55,7 +55,7 @@ const std::vector<double> TRIGGER_THRESHOLDS = {
 };
 
 // Veto panel thresholds
-const std::vector<double> TOP_VP_THRESHOLDS = {1600,1400}; // Channels 12-13 (ADC)
+const std::vector<double> TOP_VP_THRESHOLDS = {1000,1000}; // Channels 12-13 (ADC)
 const std::vector<double> WIDE_SIDE_VP_THRESHOLDS = {1100, 1500, 1200, 1375}; // Channels 14-17 (ADC)
 const std::vector<double> THIN_SIDE_VP_THRESHOLDS = {525, 700, 700, 500}; // Channels 18-21 (ADC)
 
@@ -442,11 +442,11 @@ int main(int argc, char *argv[]) {
         if (i < 2) { // Top veto panels (12-13)
             h_veto_panel_energy[i] = new TH1D(veto_panel_names[i].c_str(), 
                                              Form("%s;Energy (ADC);Counts", veto_panel_names[i].c_str()), 
-                                             200, 0, 2000);
+                                             200, 0, 6000);
         } else if (i < 6) { // Wide side veto panels (14-17)
             h_veto_panel_energy[i] = new TH1D(veto_panel_names[i].c_str(), 
                                              Form("%s;Energy (ADC);Counts", veto_panel_names[i].c_str()), 
-                                             200, 0, 8000);
+                                             200, 0, 6000);
         } else { // Thin side veto panels (18-21)
             h_veto_panel_energy[i] = new TH1D(veto_panel_names[i].c_str(), 
                                              Form("%s;Energy (ADC);Counts", veto_panel_names[i].c_str()), 
