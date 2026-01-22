@@ -50,8 +50,8 @@ string getTimestamp() {
 const string OUTPUT_DIR = "./MuonThresholdDetermination_" + getTimestamp();
 
 // UPDATED: Veto panel thresholds - channels 12-13 are top panels, 14-21 are side panels
-const std::vector<double> SIDE_VP_THRESHOLDS = {1500, 1800, 850, 900, 900, 800, 1100, 1100}; // Channels 14-21
-const double TOP_VP_THRESHOLD = 600; // Channels 12-13
+const std::vector<double> SIDE_VP_THRESHOLDS = {1200, 1800, 1000, 1000, 1000, 800, 1100, 1100}; // Channels 14-21
+const double TOP_VP_THRESHOLD = 1000; // Channels 12-13
 
 // UPDATED: Color scheme for veto panel groups
 // Group 1: Top Panels 12-13 (Red shades)
@@ -785,13 +785,13 @@ int main(int argc, char *argv[]) {
     
     // Combined histogram for TOP veto panels (12+13)
     TH1D* h_top_veto_combined = new TH1D("h_top_veto_combined", 
-                                        "Top Veto Panels 12+13 - Energy Deposition;Energy (ADC);Counts", 
+                                        "Top Veto Panels 12+13 - Energy Deposition;Integrated Pulse Area;Counts", 
                                         200, 200, 3000);
     
     // Initialize veto panel histograms
     for (int i = 0; i < 10; i++) {
         h_veto_panel[i] = new TH1D(Form("h_veto_panel_%d", i+12), 
-                                  Form("%s;Energy (ADC);Counts", veto_names[i]), 
+                                  Form("%s;Integrated Pulse Area;Counts", veto_names[i]), 
                                   200, 200, 5000);
     }
 
