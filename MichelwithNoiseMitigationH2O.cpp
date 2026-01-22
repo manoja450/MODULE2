@@ -37,7 +37,7 @@ const int PMT_CHANNEL_MAP[12] = {0,10,7,2,6,3,8,9,11,4,5,1};
 const int BS_UNCERTAINTY = 5;
 const int EV61_THRESHOLD = 1200;
 const double MUON_ENERGY_THRESHOLD = 50;
-const double MICHEL_ENERGY_MIN = 40;
+const double MICHEL_ENERGY_MIN = 100;
 const double MICHEL_ENERGY_MAX = 1000;
 const double MICHEL_ENERGY_MAX_DT = 500;
 const double MICHEL_DT_MIN = 0.76;
@@ -55,9 +55,9 @@ const std::vector<double> TRIGGER_THRESHOLDS = {
 };
 
 // Veto panel thresholds
-const std::vector<double> TOP_VP_THRESHOLDS = {1000,1000}; // Channels 12-13 (ADC)
-const std::vector<double> WIDE_SIDE_VP_THRESHOLDS = {1100, 1500, 1200, 1375}; // Channels 14-17 (ADC)
-const std::vector<double> THIN_SIDE_VP_THRESHOLDS = {525, 700, 700, 500}; // Channels 18-21 (ADC)
+const std::vector<double> TOP_VP_THRESHOLDS = {1000, 1000};       // Channels 12-13 (ADC)
+const std::vector<double> WIDE_SIDE_VP_THRESHOLDS = {1100, 1500, 1000, 1100}; // Channels 14-17 (ADC)
+const std::vector<double> THIN_SIDE_VP_THRESHOLDS = {1000, 750, 750, 750};    // Channels 18-21 (ADC)
 
 // Fit ranges
 const double FIT_MIN = 1.0;
@@ -267,11 +267,16 @@ bool performCalibration(const string &calibFileName, Double_t *mu1, Double_t *mu
     string speDir = OUTPUT_DIR + "/SPE_Fits";
     gSystem->mkdir(speDir.c_str(), kTRUE);
 
+    // Create directory for individual PMT plots
+    string individualPlotsDir = speDir + "/Individual";
+    gSystem->mkdir(individualPlotsDir.c_str(), kTRUE);
+
     TH1F *histArea[N_PMTS];
     Long64_t nLEDFlashes[N_PMTS] = {0};
     for (int i = 0; i < N_PMTS; i++) {
         histArea[i] = new TH1F(Form("PMT%d_Area", i + 1),
                                Form("PMT %d;ADC Counts;Events", i + 1), 150, -50, 400);
+        histArea[i]->SetLineColor(kRed);
     }
 
     Int_t triggerBits;
@@ -294,10 +299,11 @@ bool performCalibration(const string &calibFileName, Double_t *mu1, Double_t *mu
     Int_t defaultErrorLevel = gErrorIgnoreLevel;
     gErrorIgnoreLevel = kError;
 
-    TCanvas *c = new TCanvas("c", "SPE Fits", 1200, 800);
-    c->Divide(4, 3);
-    gStyle->SetOptStat(1111);
-    gStyle->SetOptFit(1111);
+    // Main canvas for combined view
+    TCanvas *c_combined = new TCanvas("c_combined", "SPE Fits - Combined", 1200, 800);
+    c_combined->Divide(4, 3);
+    gStyle->SetOptStat(1111);  // Enable default statistics box
+    gStyle->SetOptFit(1111);   // Enable fit parameters in stats box
     
     for (int i = 0; i < N_PMTS; i++) {
         if (histArea[i]->GetEntries() < 1000) {
@@ -308,8 +314,9 @@ bool performCalibration(const string &calibFileName, Double_t *mu1, Double_t *mu
             continue;
         }
 
-        c->cd(i+1);
-        
+        // Process in combined canvas
+        c_combined->cd(i+1);
+
         TF1 *f1 = new TF1("f1", fitGauss, -50, 50, 3);
         f1->SetParameters(1500, 0, 25);
         f1->SetParNames("A0", "#mu_{0}", "#sigma_{0}");
@@ -326,6 +333,7 @@ bool performCalibration(const string &calibFileName, Double_t *mu1, Double_t *mu
                           f6->GetParameter(3), f6->GetParameter(4), f6->GetParameter(5), 
                           200, 50);
         f8->SetParNames("A0", "#mu_{0}", "#sigma_{0}", "A1", "#mu_{1}", "#sigma_{1}", "A2", "A3");
+        f8->SetLineColor(kBlue);
         histArea[i]->Fit(f8, "Q", "", -50, 400);
 
         mu1[i] = f8->GetParameter(4);
@@ -333,22 +341,55 @@ bool performCalibration(const string &calibFileName, Double_t *mu1, Double_t *mu
 
         histArea[i]->Draw();
         f8->Draw("same");
-        
+
+        TLatex tex;
+        tex.SetTextFont(42);
+        tex.SetTextSize(0.04);
+        tex.SetNDC();
+        tex.DrawLatex(0.15, 0.85, Form("PMT %d", i+1));
+        tex.DrawLatex(0.15, 0.80, Form("mu1 = %.2f #pm %.2f", mu1[i], mu1_err[i]));
+
+        // Create individual canvas for this PMT
+        TCanvas *c_indiv = new TCanvas(Form("c_pmt%d", i+1), Form("PMT %d SPE Fit", i+1), 1200, 800);
+        histArea[i]->Draw();
+        f8->Draw("same");
+        tex.DrawLatex(0.15, 0.85, Form("PMT %d", i+1));
+        tex.DrawLatex(0.15, 0.80, Form("mu1 = %.2f #pm %.2f", mu1[i], mu1_err[i]));
+
+        // Save individual plot
+        string indivPlotName = individualPlotsDir + Form("/PMT%d_SPE_Fit.png", i+1);
+        c_indiv->SaveAs(indivPlotName.c_str());
+        cout << "Saved individual SPE plot: " << indivPlotName << endl;
+
+        delete c_indiv;
         delete f1;
         delete f6;
         delete f8;
     }
 
-    string plotName = OUTPUT_DIR + "/SPE_Fits.png";
-    c->SaveAs(plotName.c_str());
-    cout << "Saved SPE plot: " << plotName << endl;
+    // Save combined plot
+    string combinedPlotName = speDir + "/SPE_Fits_Combined.png";
+    c_combined->SaveAs(combinedPlotName.c_str());
+    cout << "Saved combined SPE plot: " << combinedPlotName << endl;
 
     gErrorIgnoreLevel = defaultErrorLevel;
+
+    // Save calibration results to file
+    ofstream calibResults(OUTPUT_DIR + "/calibration_results.txt");
+    if (calibResults.is_open()) {
+        calibResults << "SPE Calibration Results\n";
+        calibResults << "======================\n";
+        for (int i = 0; i < N_PMTS; i++) {
+            calibResults << Form("PMT %d: mu1 = %.2f ± %.2f ADC counts/p.e.", i+1, mu1[i], mu1_err[i]) << endl;
+        }
+        calibResults.close();
+        cout << "Calibration results saved to: " << OUTPUT_DIR << "/calibration_results.txt" << endl;
+    }
     
     for (int i = 0; i < N_PMTS; i++) {
         if (histArea[i]) delete histArea[i];
     }
-    delete c;
+    delete c_combined;
     calibFile->Close();
     delete calibFile;
     return true;
@@ -407,9 +448,18 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    cout << "SPE Calibration Results (from " << calibFileName << "):\n";
+    cout << "\nSPE Calibration Results (from " << calibFileName << "):\n";
+    cout << "=========================================\n";
     for (int i = 0; i < N_PMTS; i++) {
         cout << "PMT " << i + 1 << ": mu1 = " << mu1[i] << " ± " << mu1_err[i] << " ADC counts/p.e.\n";
+    }
+    cout << endl;
+
+    // Check for zero or negative calibration values
+    for (int i = 0; i < N_PMTS; i++) {
+        if (mu1[i] <= 0) {
+            cerr << "Warning: PMT " << i + 1 << " has invalid calibration (mu1 = " << mu1[i] << "). Analysis may be affected.\n";
+        }
     }
 
     int total_events = 0;
@@ -422,12 +472,14 @@ int main(int argc, char *argv[]) {
     TH1D* h_muon_energy = new TH1D("muon_energy", "Muon Energy Distribution (with Michel Electrons);Energy (p.e.);Counts/100 p.e.", 550, -500, 5000);
     TH1D* h_michel_energy = new TH1D("michel_energy", "Michel Electron Energy Distribution;Energy (p.e.);Counts/4 p.e.", 200, 0, 800);
     TH1D* h_dt_michel = new TH1D("DeltaTInital", "Muon-Michel Time Difference;Time to Previous event(Muon)(#mus);Counts/0.25 #mus", 64, 0, MICHEL_DT_MAX);
-    TH2D* h_energy_vs_dt = new TH2D("energy_vs_dt", "Michel Energy vs Time Difference;dt (#mus);Energy (p.e.)", 160, 0, 1000, 200, 0, 2000);
+    TH2D* h_energy_vs_dt = new TH2D("energy_vs_dt", "Michel Energy vs Time Difference;dt (#mus);Energy (p.e.)", 160, 0, 16, 200, 0, 1000);
     TH1D* h_side_vp_muon = new TH1D("side_vp_muon", "Side Veto Energy for Muons;Energy (ADC);Counts", 200, 0, 8000);
     TH1D* h_top_vp_muon = new TH1D("top_vp_muon", "Top Veto Energy for Muons;Energy (ADC);Counts", 200, 0, 2000);
     TH1D* h_trigger_bits = new TH1D("trigger_bits", "Trigger Bits Distribution;Trigger Bits;Counts", 36, 0, 36);
     TH1D* h_peak_position_rms = new TH1D("peak_position_rms", "Peak Position RMS Distribution;RMS (samples);Counts", 100, 0, 10);
     TH1D* h_good_vs_bad = new TH1D("good_vs_bad", "Event Quality;Quality;Counts", 2, 0, 2);
+    TH1D* h_pmt_energy_dist[N_PMTS]; // Individual PMT energy distributions
+    TH1D* h_pmt_count = new TH1D("pmt_count", "Number of PMTs with Hits per Event;Number of PMTs;Counts", 13, 0, 13);
 
     // Veto panel histograms
     TH1D* h_veto_panel_energy[10];
@@ -452,6 +504,13 @@ int main(int argc, char *argv[]) {
                                              Form("%s;Energy (ADC);Counts", veto_panel_names[i].c_str()), 
                                              200, 0, 4000);
         }
+    }
+
+    // Initialize individual PMT histograms
+    for (int i = 0; i < N_PMTS; i++) {
+        h_pmt_energy_dist[i] = new TH1D(Form("pmt_energy_%d", i+1), 
+                                       Form("PMT %d Energy Distribution;Energy (p.e.);Counts", i+1), 
+                                       200, 0, 2000);
     }
 
     // Global tracking
@@ -512,10 +571,19 @@ int main(int argc, char *argv[]) {
         int numEntries = t->GetEntries();
         cout << "Processing " << numEntries << " entries in " << inputFileName << endl;
 
+        // Progress reporting
+        int reportInterval = numEntries / 10;
+        if (reportInterval < 1) reportInterval = 1;
+
         for (int iEnt = 0; iEnt < numEntries; iEnt++) {
             t->GetEntry(iEnt);
             file_events++;
             total_events++;
+
+            // Progress report
+            if (iEnt % reportInterval == 0) {
+                cout << "  Processed " << iEnt << " events (" << (100.0 * iEnt / numEntries) << "%)" << endl;
+            }
 
             h_trigger_bits->Fill(triggerBits);
             trigger_counts[triggerBits]++;
@@ -545,6 +613,7 @@ int main(int argc, char *argv[]) {
             bool pulse_at_end = false;
             int pulse_at_end_count = 0;
             std::vector<double> veto_energies(10, 0);
+            std::vector<double> pmt_energies_per_event(N_PMTS, 0);
 
             // Set event time using nsTime and verify triggerBits
             p.start = nsTime / 1000.0;
@@ -562,7 +631,8 @@ int main(int argc, char *argv[]) {
                 }
             }
             if (!trigger_found) {
-                cout << "Warning: No channel with set trigger bit exceeded threshold in event " << eventID << endl;
+                // Optional: Uncomment for debugging
+                // cout << "Warning: No channel with set trigger bit exceeded threshold in event " << eventID << endl;
             }
 
             // Process pulses
@@ -629,14 +699,17 @@ int main(int argc, char *argv[]) {
                                 }
                                 if (pmt_idx >= 0) {
                                     pmt_pulses[pmt_idx] = pt;
+                                    double energy_pe = 0;
                                     if (mu1[pmt_idx] > 0) {
-                                        pt.energy /= mu1[pmt_idx];
+                                        energy_pe = pt.energy / mu1[pmt_idx];
+                                        pt.energy = energy_pe;
                                         pt.peak /= mu1[pmt_idx];
                                     }
                                     all_chan_start.push_back(pt.start);
                                     all_chan_end.push_back(pt.end);
                                     all_chan_peak.push_back(pt.peak);
                                     all_chan_energy.push_back(pt.energy);
+                                    pmt_energies_per_event[pmt_idx] = energy_pe;
                                     if (pt.energy > 1) p.number += 1;
                                 }
                             }
@@ -676,6 +749,15 @@ int main(int argc, char *argv[]) {
                 h_wf.Reset();
             }
 
+            // Count number of PMTs with hits
+            int pmts_with_hits = 0;
+            for (const auto& energy : pmt_energies_per_event) {
+                if (energy > 0.1) { // Small threshold to count hits
+                    pmts_with_hits++;
+                }
+            }
+            h_pmt_count->Fill(pmts_with_hits);
+
             if (!all_chan_end.empty()) {
                 p.end = p.start + mostFrequent(all_chan_end);
             }
@@ -710,6 +792,13 @@ int main(int argc, char *argv[]) {
             if (p.is_good_event) {
                 file_good_events++;
                 total_good_events++;
+
+                // Fill individual PMT histograms for good events
+                for (int pmt = 0; pmt < N_PMTS; pmt++) {
+                    if (pmt_energies_per_event[pmt] > 0) {
+                        h_pmt_energy_dist[pmt]->Fill(pmt_energies_per_event[pmt]);
+                    }
+                }
 
                 bool veto_hit = false;
                 for (size_t i = 0; i < 2; i++) { // Top veto panels (12-13)
@@ -824,7 +913,7 @@ int main(int argc, char *argv[]) {
     }
 
     // Print triggerBits distribution
-    cout << "Trigger Bits Distribution (all files):\n";
+    cout << "\nTrigger Bits Distribution (all files):\n";
     for (const auto& pair : trigger_counts) {
         cout << "Trigger " << pair.first << ": " << pair.second << " events\n";
     }
@@ -836,6 +925,8 @@ int main(int argc, char *argv[]) {
     
     for (int i = 0; i < 10; i++) {
         c_veto->Clear();
+        h_veto_panel_energy[i]->SetLineColor(kBlue);
+        h_veto_panel_energy[i]->SetLineWidth(2);
         h_veto_panel_energy[i]->Draw();
         string vetoPlotName = OUTPUT_DIR + "/" + veto_panel_names[i] + ".png";
         c_veto->SaveAs(vetoPlotName.c_str());
@@ -850,6 +941,8 @@ int main(int argc, char *argv[]) {
     
     for (int i = 0; i < 10; i++) {
         c_veto_combined->cd(i+1);
+        h_veto_panel_energy[i]->SetLineColor(kBlue);
+        h_veto_panel_energy[i]->SetLineWidth(1);
         h_veto_panel_energy[i]->Draw();
     }
     
@@ -867,6 +960,8 @@ int main(int argc, char *argv[]) {
 
     // Muon Energy
     c->Clear();
+    h_muon_energy->SetLineColor(kBlue);
+    h_muon_energy->SetLineWidth(2);
     h_muon_energy->Draw();
     string plotName = OUTPUT_DIR + "/Muon_Energy.png";
     c->SaveAs(plotName.c_str());
@@ -874,6 +969,8 @@ int main(int argc, char *argv[]) {
 
     // Michel Energy
     c->Clear();
+    h_michel_energy->SetLineColor(kRed);
+    h_michel_energy->SetLineWidth(2);
     h_michel_energy->Draw();
     plotName = OUTPUT_DIR + "/Michel_Energy.png";
     c->SaveAs(plotName.c_str());
@@ -881,6 +978,8 @@ int main(int argc, char *argv[]) {
 
     // Michel dt with exponential fit
     c->Clear();
+    h_dt_michel->SetLineColor(kBlack);
+    h_dt_michel->SetLineWidth(2);
     h_dt_michel->GetXaxis()->SetTitle("Time to previous event (Muon) (#mus)");
     h_dt_michel->Draw();
 
@@ -924,12 +1023,14 @@ int main(int argc, char *argv[]) {
         expFit->SetParLimits(1, 0.1, 20.0);
         expFit->SetParLimits(2, -C_init * 10, C_init * 10);
         expFit->SetParNames("N_{0}", "#tau", "C");
+        expFit->SetLineColor(kRed);
+        expFit->SetLineWidth(3);
         expFit->SetNpx(1000);
 
         h_dt_michel->Fit(expFit, "RE", "", FIT_MIN, FIT_MAX);
         expFit->Draw("same");
 
-        cout << "Exponential Fit Results (Michel dt, " << FIT_MIN << "-" << FIT_MAX << " µs):\n";
+        cout << "\nExponential Fit Results (Michel dt, " << FIT_MIN << "-" << FIT_MAX << " µs):\n";
         cout << Form("N₀ = %.1f ± %.1f", expFit->GetParameter(0), expFit->GetParError(0)) << endl;
         cout << Form("τ = %.4f ± %.4f µs", expFit->GetParameter(1), expFit->GetParError(1)) << endl;
         cout << Form("C = %.1f ± %.1f", expFit->GetParameter(2), expFit->GetParError(2)) << endl;
@@ -947,6 +1048,8 @@ int main(int argc, char *argv[]) {
 
     // Energy vs dt
     c->Clear();
+    h_energy_vs_dt->SetStats(0);
+    h_energy_vs_dt->GetXaxis()->SetTitle("dt (#mus)");
     h_energy_vs_dt->Draw("COLZ");
     plotName = OUTPUT_DIR + "/Michel_Energy_vs_dt.png";
     c->SaveAs(plotName.c_str());
@@ -954,6 +1057,8 @@ int main(int argc, char *argv[]) {
 
     // Side Veto Muon
     c->Clear();
+    h_side_vp_muon->SetLineColor(kMagenta);
+    h_side_vp_muon->SetLineWidth(2);
     h_side_vp_muon->Draw();
     plotName = OUTPUT_DIR + "/Side_Veto_Muon.png";
     c->SaveAs(plotName.c_str());
@@ -961,6 +1066,8 @@ int main(int argc, char *argv[]) {
 
     // Top Veto Muon
     c->Clear();
+    h_top_vp_muon->SetLineColor(kCyan);
+    h_top_vp_muon->SetLineWidth(2);
     h_top_vp_muon->Draw();
     plotName = OUTPUT_DIR + "/Top_Veto_Muon.png";
     c->SaveAs(plotName.c_str());
@@ -968,6 +1075,8 @@ int main(int argc, char *argv[]) {
 
     // Trigger Bits Distribution
     c->Clear();
+    h_trigger_bits->SetLineColor(kOrange);
+    h_trigger_bits->SetLineWidth(2);
     h_trigger_bits->Draw();
     plotName = OUTPUT_DIR + "/TriggerBits_Distribution.png";
     c->SaveAs(plotName.c_str());
@@ -975,6 +1084,8 @@ int main(int argc, char *argv[]) {
 
     // Peak Position RMS
     c->Clear();
+    h_peak_position_rms->SetLineColor(kGreen);
+    h_peak_position_rms->SetLineWidth(2);
     h_peak_position_rms->Draw();
     plotName = OUTPUT_DIR + "/Peak_Position_RMS.png";
     c->SaveAs(plotName.c_str());
@@ -982,10 +1093,36 @@ int main(int argc, char *argv[]) {
 
     // Good vs Bad Events
     c->Clear();
+    h_good_vs_bad->SetFillColor(kBlue);
+    h_good_vs_bad->GetXaxis()->SetBinLabel(1, "Good Events");
+    h_good_vs_bad->GetXaxis()->SetBinLabel(2, "Bad Events");
     h_good_vs_bad->Draw("BAR");
     plotName = OUTPUT_DIR + "/Good_vs_Bad_Events.png";
     c->SaveAs(plotName.c_str());
     cout << "Saved plot: " << plotName << endl;
+
+    // PMT Count distribution
+    c->Clear();
+    h_pmt_count->SetLineColor(kBlack);
+    h_pmt_count->SetLineWidth(2);
+    h_pmt_count->Draw();
+    plotName = OUTPUT_DIR + "/PMT_Count_Distribution.png";
+    c->SaveAs(plotName.c_str());
+    cout << "Saved plot: " << plotName << endl;
+
+    // Create combined PMT energy distribution plot
+    TCanvas *c_pmt_combined = new TCanvas("c_pmt_combined", "PMT Energy Distributions", 1200, 800);
+    c_pmt_combined->Divide(4, 3);
+    for (int i = 0; i < N_PMTS; i++) {
+        c_pmt_combined->cd(i+1);
+        h_pmt_energy_dist[i]->SetLineColor(kBlue);
+        h_pmt_energy_dist[i]->SetLineWidth(1);
+        h_pmt_energy_dist[i]->Draw();
+    }
+    plotName = OUTPUT_DIR + "/Combined_PMT_Energy_Distributions.png";
+    c_pmt_combined->SaveAs(plotName.c_str());
+    cout << "Saved plot: " << plotName << endl;
+    delete c_pmt_combined;
 
     // Save histograms to ROOT file
     TFile *outFile = new TFile((OUTPUT_DIR + "/analysis_output.root").c_str(), "RECREATE");
@@ -998,11 +1135,32 @@ int main(int argc, char *argv[]) {
     h_trigger_bits->Write();
     h_peak_position_rms->Write();
     h_good_vs_bad->Write();
+    h_pmt_count->Write();
     for (int i = 0; i < 10; i++) {
         h_veto_panel_energy[i]->Write();
     }
+    for (int i = 0; i < N_PMTS; i++) {
+        h_pmt_energy_dist[i]->Write();
+    }
     outFile->Close();
     delete outFile;
+
+    // Save summary statistics
+    ofstream summary(OUTPUT_DIR + "/analysis_summary.txt");
+    if (summary.is_open()) {
+        summary << "Analysis Summary\n";
+        summary << "================\n";
+        summary << "Total Events Processed: " << total_events << endl;
+        summary << "Total Good Events: " << total_good_events << endl;
+        summary << "Total Muons Detected: " << total_muons << endl;
+        summary << "Total Michel Electrons Detected: " << total_michels << endl;
+        summary << "\nTrigger Bits Distribution:\n";
+        for (const auto& pair : trigger_counts) {
+            summary << "Trigger " << pair.first << ": " << pair.second << " events\n";
+        }
+        summary.close();
+        cout << "Analysis summary saved to: " << OUTPUT_DIR << "/analysis_summary.txt" << endl;
+    }
 
     // Clean up
     delete h_muon_energy;
@@ -1014,12 +1172,16 @@ int main(int argc, char *argv[]) {
     delete h_trigger_bits;
     delete h_peak_position_rms;
     delete h_good_vs_bad;
+    delete h_pmt_count;
     for (int i = 0; i < 10; i++) {
         delete h_veto_panel_energy[i];
     }
+    for (int i = 0; i < N_PMTS; i++) {
+        delete h_pmt_energy_dist[i];
+    }
     delete c;
 
-    cout << "Analysis complete. Results saved in " << OUTPUT_DIR << "/ (*.png, analysis_output.root)" << endl;
+    cout << "\nAnalysis complete. Results saved in " << OUTPUT_DIR << "/ (*.png, analysis_output.root)" << endl;
     cout << "Total Events Processed: " << total_events << endl;
     cout << "Total Good Events: " << total_good_events << endl;
     cout << "Total Muons Detected: " << total_muons << endl;
