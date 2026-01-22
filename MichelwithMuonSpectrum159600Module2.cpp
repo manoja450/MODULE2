@@ -9,6 +9,7 @@
 #include <TMath.h>
 #include <TStyle.h>
 #include <TLegend.h>
+#include <TLatex.h>
 #include <TPaveStats.h>
 #include <TGaxis.h>
 #include <iostream>
@@ -25,14 +26,16 @@
 #include <TGraph.h>
 #include <TPad.h>
 #include <memory>
+#include <cmath>
 
 using std::cout;
+using std::cerr;
 using std::endl;
 using namespace std;
 
 // Constants
 const int N_PMTS = 12;
-const int PMT_CHANNEL_MAP[12] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
+const int PMT_CHANNEL_MAP[12] = {0,10,7,2,6,3,8,9,11,4,5,1};
 const int PULSE_THRESHOLD = 30;     // ADC threshold for pulse detection
 const int BS_UNCERTAINTY = 5;       // Baseline uncertainty (ADC)
 const int EV61_THRESHOLD = 1200;    // Beam on if channel 22 > this (ADC)
@@ -61,6 +64,28 @@ string getTimestamp() {
 }
 const string OUTPUT_DIR = "./AnalysisOutput_" + getTimestamp();
 
+// SPE fitting functions
+Double_t fitGauss(Double_t *x, Double_t *par) {
+    return par[0] * TMath::Gaus(x[0], par[1], par[2]);
+}
+
+Double_t six_fit_func(Double_t *x, Double_t *par) {
+    return (par[0] * TMath::Gaus(x[0], par[1], par[2]) +
+           par[3] * TMath::Gaus(x[0], par[4], par[5]));
+}
+
+Double_t eight_fit_func(Double_t *x, Double_t *par) {
+    return (par[0] * TMath::Gaus(x[0], par[1], par[2]) +
+           par[3] * TMath::Gaus(x[0], par[4], par[5]) +
+           par[6] * TMath::Gaus(x[0], 2.0 * par[4], TMath::Sqrt(2.0 * par[5]*par[5] - par[2]*par[2])) +
+           par[7] * TMath::Gaus(x[0], 3.0 * par[4], TMath::Sqrt(3.0 * par[5]*par[5] - 2.0 * par[2]*par[2])));
+}
+
+// Exponential fit function: N0 * exp(-t/tau) + C (t, tau in µs)
+Double_t ExpFit(Double_t *x, Double_t *par) {
+    return par[0] * exp(-x[0] / par[1]) + par[2];
+}
+
 // Pulse structure
 struct pulse {
     double start;          // Start time (µs)
@@ -88,20 +113,6 @@ struct pulse_temp {
     double peak;   // Max amplitude
     double energy; // Energy
 };
-
-// SPE fitting function
-Double_t SPEfit(Double_t *x, Double_t *par) {
-    Double_t term1 = par[0] * exp(-0.5 * pow((x[0] - par[1]) / par[2], 2));
-    Double_t term2 = par[3] * exp(-0.5 * pow((x[0] - par[4]) / par[5], 2));
-    Double_t term3 = par[6] * exp(-0.5 * pow((x[0] - sqrt(2) * par[4]) / sqrt(2 * pow(par[5], 2) - pow(par[2], 2)), 2));
-    Double_t term4 = par[7] * exp(-0.5 * pow((x[0] - sqrt(3) * par[4]) / sqrt(3 * pow(par[5], 2) - 2 * pow(par[2], 2)), 2));
-    return term1 + term2 + term3 + term4;
-}
-
-// Exponential fit function: N0 * exp(-t/tau) + C (t, tau in µs)
-Double_t ExpFit(Double_t *x, Double_t *par) {
-    return par[0] * exp(-x[0] / par[1]) + par[2];
-}
 
 // Utility functions
 template<typename T>
@@ -151,27 +162,31 @@ void createOutputDirectory(const string& dirName) {
     }
 }
 
-// SPE calibration function
-void performCalibration(const string &calibFileName, Double_t *mu1, Double_t *mu1_err) {
-    std::unique_ptr<TFile> calibFile(TFile::Open(calibFileName.c_str()));
+// SPE calibration function using the improved fitting method
+bool performCalibration(const string &calibFileName, Double_t *mu1, Double_t *mu1_err) {
+    TFile *calibFile = TFile::Open(calibFileName.c_str());
     if (!calibFile || calibFile->IsZombie()) {
         cerr << "Error opening calibration file: " << calibFileName << endl;
-        exit(1);
+        return false;
     }
 
     TTree *calibTree = (TTree*)calibFile->Get("tree");
     if (!calibTree) {
         cerr << "Error accessing tree in calibration file" << endl;
-        exit(1);
+        calibFile->Close();
+        delete calibFile;
+        return false;
     }
 
-    std::unique_ptr<TCanvas> c(new TCanvas("c", "SPE Fits", 1200, 800));
-    std::vector<TH1F*> histArea(N_PMTS);
+    string speDir = OUTPUT_DIR + "/SPE_Fits";
+    gSystem->mkdir(speDir.c_str(), kTRUE);
+
+    TH1F *histArea[N_PMTS];
     Long64_t nLEDFlashes[N_PMTS] = {0};
-    
     for (int i = 0; i < N_PMTS; i++) {
         histArea[i] = new TH1F(Form("PMT%d_Area", i + 1),
                              Form("PMT %d;ADC Counts;Events", i + 1), 150, -50, 400);
+        histArea[i]->SetLineColor(kRed);
     }
 
     Int_t triggerBits;
@@ -191,6 +206,19 @@ void performCalibration(const string &calibFileName, Double_t *mu1, Double_t *mu
         }
     }
 
+    Int_t defaultErrorLevel = gErrorIgnoreLevel;
+    gErrorIgnoreLevel = kError;
+
+    // Create directory for individual PMT plots
+    string individualPlotsDir = speDir + "/Individual";
+    gSystem->mkdir(individualPlotsDir.c_str(), kTRUE);
+
+    // Main canvas for combined view
+    TCanvas *c_combined = new TCanvas("c_combined", "SPE Fits - Combined", 1200, 800);
+    c_combined->Divide(4, 3);
+    gStyle->SetOptStat(1111);  // Enable default statistics box
+    gStyle->SetOptFit(1111);   // Enable fit parameters in stats box
+
     for (int i = 0; i < N_PMTS; i++) {
         if (histArea[i]->GetEntries() < 1000) {
             cerr << "Warning: Insufficient data for PMT " << i + 1 << " in " << calibFileName << endl;
@@ -200,36 +228,74 @@ void performCalibration(const string &calibFileName, Double_t *mu1, Double_t *mu
             continue;
         }
 
-        std::unique_ptr<TF1> fitFunc(new TF1("fitFunc", SPEfit, -50, 400, 8));
-        Double_t histMean = histArea[i]->GetMean();
-        Double_t histRMS = histArea[i]->GetRMS();
+        // Process in combined canvas
+        c_combined->cd(i+1);
 
-        fitFunc->SetParameters(1000, histMean - histRMS, histRMS / 2,
-                             1000, histMean, histRMS,
-                             500, 200);
+        TF1 *f1 = new TF1("f1", fitGauss, -50, 50, 3);
+        f1->SetParameters(1500, 0, 25);
+        f1->SetParNames("A0", "#mu_{0}", "#sigma_{0}");
+        histArea[i]->Fit(f1, "Q", "", -50, 50);
 
-        histArea[i]->Fit(fitFunc.get(), "Q", "", -50, 400);
+        TF1 *f6 = new TF1("f6", six_fit_func, -50, 200, 6);
+        f6->SetParameters(f1->GetParameter(0), f1->GetParameter(1), f1->GetParameter(2),
+                        1800, 70, 30);
+        f6->SetParNames("A0", "#mu_{0}", "#sigma_{0}", "A1", "#mu_{1}", "#sigma_{1}");
+        histArea[i]->Fit(f6, "Q", "", -50, 200);
 
-        mu1[i] = fitFunc->GetParameter(4);
-        Double_t sigma_mu1 = fitFunc->GetParError(4);
-        Double_t sigma1 = fitFunc->GetParameter(5);
-        mu1_err[i] = sqrt(pow(sigma_mu1, 2) + pow(sigma1 / sqrt(nLEDFlashes[i]), 2));
+        TF1 *f8 = new TF1("f8", eight_fit_func, -50, 400, 8);
+        f8->SetParameters(f6->GetParameter(0), f6->GetParameter(1), f6->GetParameter(2),
+                        f6->GetParameter(3), f6->GetParameter(4), f6->GetParameter(5),
+                        200, 50);
+        f8->SetParNames("A0", "#mu_{0}", "#sigma_{0}", "A1", "#mu_{1}", "#sigma_{1}", "A2", "A3");
+        f8->SetLineColor(kBlue);
+        histArea[i]->Fit(f8, "Q", "", -50, 400);
 
-        // Plot SPE fit
-        c->Clear();
+        mu1[i] = f8->GetParameter(4);
+        mu1_err[i] = f8->GetParError(4);
+
         histArea[i]->Draw();
-        fitFunc->Draw("same");
-        std::unique_ptr<TLegend> leg(new TLegend(0.6, 0.7, 0.9, 0.9));
-        leg->AddEntry(histArea[i], Form("PMT %d Data", i + 1), "l");
-        leg->AddEntry(fitFunc.get(), "SPE Fit", "l");
-        leg->AddEntry((TObject*)0, Form("mu1 = %.2f #pm %.2f", mu1[i], mu1_err[i]), "");
-        leg->Draw();
-        string plotName = OUTPUT_DIR + Form("/SPE_Fit_PMT%d.png", i + 1);
-        c->Update();
-        c->SaveAs(plotName.c_str());
-        cout << "Saved SPE plot: " << plotName << endl;
-        delete histArea[i];
+        f8->Draw("same");
+
+        TLatex tex;
+        tex.SetTextFont(42);
+        tex.SetTextSize(0.04);
+        tex.SetNDC();
+        tex.DrawLatex(0.15, 0.85, Form("PMT %d", i+1));
+        tex.DrawLatex(0.15, 0.80, Form("mu1 = %.2f #pm %.2f", mu1[i], mu1_err[i]));
+
+        // Create individual canvas for this PMT
+        TCanvas *c_indiv = new TCanvas(Form("c_pmt%d", i+1), Form("PMT %d SPE Fit", i+1), 1200, 800);
+        histArea[i]->Draw();
+        f8->Draw("same");
+        tex.DrawLatex(0.15, 0.85, Form("PMT %d", i+1));
+        tex.DrawLatex(0.15, 0.80, Form("mu1 = %.2f #pm %.2f", mu1[i], mu1_err[i]));
+
+        // Save individual plot
+        string indivPlotName = individualPlotsDir + Form("/PMT%d_SPE_Fit.png", i+1);
+        c_indiv->SaveAs(indivPlotName.c_str());
+        cout << "Saved individual SPE plot: " << indivPlotName << endl;
+
+        delete c_indiv;
+        delete f1;
+        delete f6;
+        delete f8;
     }
+
+    // Save combined plot
+    string combinedPlotName = speDir + "/SPE_Fits_Combined.png";
+    c_combined->SaveAs(combinedPlotName.c_str());
+    cout << "Saved combined SPE plot: " << combinedPlotName << endl;
+
+    gErrorIgnoreLevel = defaultErrorLevel;
+
+    for (int i = 0; i < N_PMTS; i++) {
+        if (histArea[i]) delete histArea[i];
+    }
+    delete c_combined;
+    calibFile->Close();
+    delete calibFile;
+    
+    return true;
 }
 
 void createVetoPanelPlots(TH1D* h_veto_panel[10], const string& outputDir) {
@@ -331,13 +397,17 @@ int main(int argc, char *argv[]) {
     // Perform SPE calibration
     Double_t mu1[N_PMTS] = {0};
     Double_t mu1_err[N_PMTS] = {0};
-    performCalibration(calibFileName, mu1, mu1_err);
+    if (!performCalibration(calibFileName, mu1, mu1_err)) {
+        cerr << "SPE calibration failed!" << endl;
+        return -1;
+    }
 
     // Print calibration results
-    cout << "SPE Calibration Results (from " << calibFileName << "):\n";
+    cout << "\nSPE Calibration Results (from " << calibFileName << "):\n";
     for (int i = 0; i < N_PMTS; i++) {
         cout << "PMT " << i + 1 << ": mu1 = " << mu1[i] << " ± " << mu1_err[i] << " ADC counts/p.e.\n";
     }
+    cout << endl;
 
     // Statistics counters
     int num_muons = 0;
