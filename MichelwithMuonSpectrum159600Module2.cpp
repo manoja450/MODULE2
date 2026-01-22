@@ -47,7 +47,7 @@ const int ADCSIZE = 45;                 // Number of ADC samples per waveform
 // Veto panel thresholds
 const std::vector<double> TOP_VP_THRESHOLDS = {1000, 1000};       // Channels 12-13 (ADC)
 const std::vector<double> WIDE_SIDE_VP_THRESHOLDS = {1100, 1500, 1000, 1100}; // Channels 14-17 (ADC)
-const std::vector<double> THIN_SIDE_VP_THRESHOLDS = {250, 250, 250, 250};    // Channels 18-21 (ADC)
+const std::vector<double> THIN_SIDE_VP_THRESHOLDS = {1000, 750, 750, 750};    // Channels 18-21 (ADC)
 const double FIT_MIN = 1.0; // Fit range min (µs)
 const double FIT_MAX = 16.0; // Fit range max (µs)
 
