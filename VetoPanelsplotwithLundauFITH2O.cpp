@@ -771,16 +771,16 @@ int main(int argc, char *argv[]) {
     // Histograms for veto panels (12-21)
     TH1D* h_veto_panel[10];
     const char* veto_names[10] = {
-        "Veto Panel 12 (TOP) - Energy Deposition",       // Channel 12 - TOP
-        "Veto Panel 13 (TOP) - Energy Deposition",       // Channel 13 - TOP
-        "Veto Panel 14 (SIDE) - Energy Deposition",      // Channel 14 - SIDE
-        "Veto Panel 15 (SIDE) - Energy Deposition",      // Channel 15 - SIDE
-        "Veto Panel 16 (SIDE) - Energy Deposition",      // Channel 16 - SIDE
-        "Veto Panel 17 (SIDE) - Energy Deposition",      // Channel 17 - SIDE
-        "Veto Panel 18 (SIDE) - Energy Deposition",      // Channel 18 - SIDE
-        "Veto Panel 19 (SIDE) - Energy Deposition",      // Channel 19 - SIDE
-        "Veto Panel 20 (SIDE) - Energy Deposition",      // Channel 20 - SIDE
-        "Veto Panel 21 (SIDE) - Energy Deposition"       // Channel 21 - SIDE
+        "Veto Panel 12  - Energy Deposition",       // Channel 12 - TOP
+        "Veto Panel 13  - Energy Deposition",       // Channel 13 - TOP
+        "Veto Panel 14  - Energy Deposition",      // Channel 14 - SIDE
+        "Veto Panel 15  - Energy Deposition",      // Channel 15 - SIDE
+        "Veto Panel 16  - Energy Deposition",      // Channel 16 - SIDE
+        "Veto Panel 17  - Energy Deposition",      // Channel 17 - SIDE
+        "Veto Panel 18  - Energy Deposition",      // Channel 18 - SIDE
+        "Veto Panel 19  - Energy Deposition",      // Channel 19 - SIDE
+        "Veto Panel 20  - Energy Deposition",      // Channel 20 - SIDE
+        "Veto Panel 21  - Energy Deposition"       // Channel 21 - SIDE
     };
     
     // Combined histogram for TOP veto panels (12+13)
