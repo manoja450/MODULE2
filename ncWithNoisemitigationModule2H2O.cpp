@@ -29,7 +29,6 @@
 #include <TGraph.h>
 #include <TGraphErrors.h>
 #include <TPad.h>
-#include <memory>
 
 using std::cout;
 using std::cerr;
@@ -43,10 +42,10 @@ const int PULSE_THRESHOLD = 30;
 const int BS_UNCERTAINTY = 5;
 const int EV61_THRESHOLD = 1200;
 const double MUON_ENERGY_THRESHOLD = 50;
-const double MICHEL_ENERGY_MIN = 40;  // Changed from 0 to 40
+const double MICHEL_ENERGY_MIN = 40;
 const double MICHEL_ENERGY_MAX = 1000;
 const double MICHEL_ENERGY_MAX_DT = 500;
-const double MICHEL_DT_MIN = 0.8;     // Changed from 0.76 to 0.8
+const double MICHEL_DT_MIN = 0.8;
 const double MICHEL_DT_MAX = 16.0;
 const double MICHEL_DT_MIN_EXTENDED = 0;
 const double MICHEL_DT_MAX_EXTENDED = 16.0;
@@ -55,29 +54,16 @@ const int ADCSIZE = 45;
 const double LOW_ENERGY_DT_MIN = 16.0;
 const std::vector<double> SIDE_VP_THRESHOLDS = {1100, 1500, 1000, 1100, 1000, 750, 750, 750};
 const double TOP_VP_THRESHOLD = 1000;
-const double FIT_MIN = 1.0;           // Changed from 2.0 to 1.0
-const double FIT_MAX = 10.0;          // Changed from 16.0 to 10.0
+const double FIT_MIN = 1.0;
+const double FIT_MAX = 10.0;
 const double FIT_MIN_LOW_MUON = 16.0;
 const double FIT_MAX_LOW_MUON = 1200.0;
 
 // Noise mitigation constants
-const double PEAK_POSITION_RMS_CUT = 2.5;    // RMS cut for peak positions
-const double AREA_HEIGHT_RATIO_CUT = 1.2;    // Area/Height ratio cut
-const int SATURATION_THRESHOLD_LOW = 100;    // Lower saturation threshold
-const int SATURATION_THRESHOLD_HIGH = 4000;  // Upper saturation threshold
-
-// Channel-specific trigger thresholds
-const std::vector<double> TRIGGER_THRESHOLDS = {
-    100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100,  // PMTs 0-11
-    50, 50, 50, 50, 50, 50, 50, 50,  // Side veto panels 12-19
-    30, 30,  // Top veto panels 20-21
-    100  // Channel 22
-};
-
-// Combined veto thresholds (channels 12-21)
-const std::vector<double> VETO_THRESHOLDS = {
-    750, 950, 1200, 1375, 525, 700, 700, 500, 450, 450
-};
+const double PEAK_POSITION_RMS_CUT = 2.5;
+const double AREA_HEIGHT_RATIO_CUT = 1.2;
+const int SATURATION_THRESHOLD_LOW = 100;
+const int SATURATION_THRESHOLD_HIGH = 4000;
 
 // Michel background prediction constants
 const double SIGNAL_REGION_MIN = 16.0;
@@ -102,7 +88,7 @@ struct pulse_temp {
     double energy = 0;
     int peak_position = -1;
     bool is_saturated = false;
-    int number = 0;  // Added to store pulse number
+    int number = 0;
 };
 
 struct pulse {
@@ -134,7 +120,7 @@ struct MichelCandidate {
     string fileName;
 };
 
-// SPE Fitting functions
+// Fitting functions
 Double_t fitGauss(Double_t *x, Double_t *par) {
     return par[0] * TMath::Gaus(x[0], par[1], par[2]);
 }
@@ -273,21 +259,23 @@ double calculateLiveTime(const vector<string>& inputFiles) {
     double totalLiveTime = 0.0;
     
     for (const auto& fileName : inputFiles) {
-        std::unique_ptr<TFile> file(TFile::Open(fileName.c_str()));
+        TFile* file = TFile::Open(fileName.c_str());
         if (!file || file->IsZombie()) {
             cerr << "Warning: Could not open file for live time calculation: " << fileName << endl;
             continue;
         }
         
-        TTree* tree = dynamic_cast<TTree*>(file->Get("tree"));
+        TTree* tree = (TTree*)file->Get("tree");
         if (!tree) {
             cerr << "Warning: Could not find tree in file: " << fileName << endl;
+            file->Close();
             continue;
         }
         
         Long64_t nEntries = tree->GetEntries();
         if (nEntries == 0) {
             cout << "File: " << fileName << " - No entries, skipping" << endl;
+            file->Close();
             continue;
         }
         
@@ -307,12 +295,15 @@ double calculateLiveTime(const vector<string>& inputFiles) {
         cout << "  First event: " << first_time << " ns (" << first_time/1e9 << " s)" << endl;
         cout << "  Last event: " << last_time << " ns (" << last_time/1e9 << " s)" << endl;
         cout << "  Live time: " << liveTime_seconds << " seconds (" << liveTime_seconds / 3600.0 << " hours)" << endl;
+        
+        file->Close();
     }
     
     return totalLiveTime;
 }
 
-void saveLiveTimeInfo(double totalLiveTime, double fit_michels_2_16, double predicted_michels, double predicted_michels_err, const string& outputDir) {
+void saveLiveTimeInfo(double totalLiveTime, double fit_michels_2_16, double predicted_michels, 
+                     double predicted_michels_err, const string& outputDir) {
     string filename = outputDir + "/LiveTime_Info.txt";
     ofstream outFile(filename);
     
@@ -345,22 +336,20 @@ void saveLiveTimeInfo(double totalLiveTime, double fit_michels_2_16, double pred
 }
 
 void performCalibration(const string &calibFileName, Double_t *mu1, Double_t *mu1_err) {
-    std::unique_ptr<TFile> calibFile(TFile::Open(calibFileName.c_str()));
+    TFile *calibFile = TFile::Open(calibFileName.c_str());
     if (!calibFile || calibFile->IsZombie()) {
         cerr << "Error opening calibration file: " << calibFileName << endl;
         exit(1);
     }
 
-    TTree *calibTree = dynamic_cast<TTree*>(calibFile->Get("tree"));
+    TTree *calibTree = (TTree*)calibFile->Get("tree");
     if (!calibTree) {
         cerr << "Error accessing tree in calibration file" << endl;
+        calibFile->Close();
         exit(1);
     }
 
-    string speDir = OUTPUT_DIR + "/SPE_Fits";
-    gSystem->mkdir(speDir.c_str(), kTRUE);
-
-    std::vector<TH1F*> histArea(N_PMTS, nullptr);
+    TH1F *histArea[N_PMTS];
     for (int i = 0; i < N_PMTS; i++) {
         histArea[i] = new TH1F(Form("PMT%d_Area", i + 1),
                                Form("PMT %d;ADC Counts;Events", i + 1), 150, -50, 400);
@@ -386,10 +375,7 @@ void performCalibration(const string &calibFileName, Double_t *mu1, Double_t *mu
     Int_t defaultErrorLevel = gErrorIgnoreLevel;
     gErrorIgnoreLevel = kError;
 
-    string individualPlotsDir = speDir + "/Individual";
-    gSystem->mkdir(individualPlotsDir.c_str(), kTRUE);
-
-    std::unique_ptr<TCanvas> c_combined(new TCanvas("c_combined", "SPE Fits - Combined", 1200, 800));
+    TCanvas *c_combined = new TCanvas("c_combined", "SPE Fits - Combined", 1200, 800);
     c_combined->Divide(4, 3);
     gStyle->SetOptStat(1111);
     gStyle->SetOptFit(1111);
@@ -436,19 +422,9 @@ void performCalibration(const string &calibFileName, Double_t *mu1, Double_t *mu
         tex.SetNDC();
         tex.DrawLatex(0.15, 0.85, Form("PMT %d", i+1));
         tex.DrawLatex(0.15, 0.80, Form("mu1 = %.2f #pm %.2f", mu1[i], mu1_err[i]));
-
-        std::unique_ptr<TCanvas> c_indiv(new TCanvas(Form("c_pmt%d", i+1), Form("PMT %d SPE Fit", i+1), 1200, 800));
-        histArea[i]->Draw();
-        f8.Draw("same");
-        tex.DrawLatex(0.15, 0.85, Form("PMT %d", i+1));
-        tex.DrawLatex(0.15, 0.80, Form("mu1 = %.2f #pm %.2f", mu1[i], mu1_err[i]));
-
-        string indivPlotName = individualPlotsDir + Form("/PMT%d_SPE_Fit.png", i+1);
-        c_indiv->SaveAs(indivPlotName.c_str());
-        cout << "Saved individual plot: " << indivPlotName << endl;
     }
 
-    string combinedPlotName = speDir + "/SPE_Fits_Combined.png";
+    string combinedPlotName = OUTPUT_DIR + "/SPE_Fits_Combined.png";
     c_combined->SaveAs(combinedPlotName.c_str());
     cout << "Saved combined SPE plot: " << combinedPlotName << endl;
 
@@ -457,11 +433,13 @@ void performCalibration(const string &calibFileName, Double_t *mu1, Double_t *mu
     for (int i = 0; i < N_PMTS; i++) {
         if (histArea[i]) delete histArea[i];
     }
+    delete c_combined;
+    calibFile->Close();
 }
 
 void createVetoPanelPlots(TH1D* h_veto_panel[10], const string& outputDir) {
     for (int i = 0; i < 10; i++) {
-        std::unique_ptr<TCanvas> c(new TCanvas(Form("c_veto_%d", i+12), Form("Veto Panel %d", i+12), 1200, 800));
+        TCanvas *c = new TCanvas(Form("c_veto_%d", i+12), Form("Veto Panel %d", i+12), 1200, 800);
         gStyle->SetOptStat(1111);
         gStyle->SetOptTitle(1);
         gStyle->SetStatX(0.9);
@@ -474,9 +452,10 @@ void createVetoPanelPlots(TH1D* h_veto_panel[10], const string& outputDir) {
         string plotName = outputDir + Form("/Veto_Panel_%d.png", i+12);
         c->SaveAs(plotName.c_str());
         cout << "Saved veto panel plot: " << plotName << endl;
+        delete c;
     }
 
-    std::unique_ptr<TCanvas> c_combined(new TCanvas("c_veto_combined", "Combined Veto Panel Energies", 1600, 1200));
+    TCanvas *c_combined = new TCanvas("c_veto_combined", "Combined Veto Panel Energies", 1600, 1200);
     c_combined->Divide(4, 3);
     for (int i = 0; i < 10; i++) {
         c_combined->cd(i+1);
@@ -485,9 +464,10 @@ void createVetoPanelPlots(TH1D* h_veto_panel[10], const string& outputDir) {
         h_veto_panel[i]->SetTitle("");
         h_veto_panel[i]->Draw("hist");
     }
-    string combinedPlotName = OUTPUT_DIR + "/Combined_Veto_Panels.png";
+    string combinedPlotName = outputDir + "/Combined_Veto_Panels.png";
     c_combined->SaveAs(combinedPlotName.c_str());
     cout << "Saved combined veto panel plot: " << combinedPlotName << endl;
+    delete c_combined;
 }
 
 void saveCosmicFluxToCSV(const std::map<Long64_t, int>& cosmic_counts, const string& outputDir) {
@@ -581,8 +561,7 @@ void saveAllHistogramsToRootFile(TFile* rootFile,
                                 TH1D* h_scaled_sideband, TH1D* h_michel_background_predicted,
                                 TH1D* h_final_subtracted, TH1D* h_low_pe_signal_norm,
                                 TH1D* h_low_pe_sideband_norm, TH1D* h_scaled_sideband_norm,
-                                TH1D* h_michel_background_predicted_norm, TH1D* h_final_subtracted_norm,
-                                TH1D* h_peak_position_rms, TH1D* h_good_vs_bad) {
+                                TH1D* h_michel_background_predicted_norm, TH1D* h_final_subtracted_norm) {
     
     if (!rootFile || rootFile->IsZombie()) {
         cerr << "Error: Cannot save histograms to ROOT file - file is not open or is zombie" << endl;
@@ -591,53 +570,75 @@ void saveAllHistogramsToRootFile(TFile* rootFile,
     
     rootFile->cd();
     
-    // Write histograms to file
-    #define WRITE_HIST(hist) if (hist) { hist->SetDirectory(rootFile); hist->Write(); }
+    // Save main histograms
+    if (h_muon_energy) h_muon_energy->Write();
+    if (h_muon_all) h_muon_all->Write();
+    if (h_michel_energy) h_michel_energy->Write();
+    if (h_dt_michel) h_dt_michel->Write();
+    if (h_energy_vs_dt) h_energy_vs_dt->Write();
+    if (h_side_vp_muon) h_side_vp_muon->Write();
+    if (h_top_vp_muon) h_top_vp_muon->Write();
+    if (h_trigger_bits) h_trigger_bits->Write();
+    if (h_isolated_pe) h_isolated_pe->Write();
+    if (h_low_iso) h_low_iso->Write();
+    if (h_high_iso) h_high_iso->Write();
+    if (h_dt_prompt_delayed) h_dt_prompt_delayed->Write();
+    if (h_dt_low_muon) h_dt_low_muon->Write();
+    if (h_dt_high_muon) h_dt_high_muon->Write();
+    if (h_low_pe_signal) h_low_pe_signal->Write();
+    if (h_low_pe_sideband) h_low_pe_sideband->Write();
+    if (h_isolated_ge40) h_isolated_ge40->Write();
+    if (h_dt_michel_sideband) h_dt_michel_sideband->Write();
+    if (h_michel_energy_fit_range) h_michel_energy_fit_range->Write();
+    if (h_neutron_richness) h_neutron_richness->Write();
+    if (h_signal_significance) h_signal_significance->Write();
+    if (h_energy_vs_time_low) h_energy_vs_time_low->Write();
+    if (h_energy_vs_time_high) h_energy_vs_time_high->Write();
+    if (h_michel_energy_predicted) h_michel_energy_predicted->Write();
+    if (h_scaled_sideband) h_scaled_sideband->Write();
+    if (h_michel_background_predicted) h_michel_background_predicted->Write();
+    if (h_final_subtracted) h_final_subtracted->Write();
+    if (h_low_pe_signal_norm) h_low_pe_signal_norm->Write();
+    if (h_low_pe_sideband_norm) h_low_pe_sideband_norm->Write();
+    if (h_scaled_sideband_norm) h_scaled_sideband_norm->Write();
+    if (h_michel_background_predicted_norm) h_michel_background_predicted_norm->Write();
+    if (h_final_subtracted_norm) h_final_subtracted_norm->Write();
     
-    WRITE_HIST(h_muon_energy);
-    WRITE_HIST(h_muon_all);
-    WRITE_HIST(h_michel_energy);
-    WRITE_HIST(h_dt_michel);
-    WRITE_HIST(h_energy_vs_dt);
-    WRITE_HIST(h_side_vp_muon);
-    WRITE_HIST(h_top_vp_muon);
-    WRITE_HIST(h_trigger_bits);
-    WRITE_HIST(h_isolated_pe);
-    WRITE_HIST(h_low_iso);
-    WRITE_HIST(h_high_iso);
-    WRITE_HIST(h_dt_prompt_delayed);
-    WRITE_HIST(h_dt_low_muon);
-    WRITE_HIST(h_dt_high_muon);
-    WRITE_HIST(h_low_pe_signal);
-    WRITE_HIST(h_low_pe_sideband);
-    WRITE_HIST(h_isolated_ge40);
-    WRITE_HIST(h_dt_michel_sideband);
-    WRITE_HIST(h_michel_energy_fit_range);
-    WRITE_HIST(h_peak_position_rms);
-    WRITE_HIST(h_good_vs_bad);
-    
+    // Save veto panel histograms
     for (int i = 0; i < 10; i++) {
-        WRITE_HIST(h_veto_panel[i]);
+        if (h_veto_panel[i]) h_veto_panel[i]->Write();
     }
     
-    WRITE_HIST(h_neutron_richness);
-    WRITE_HIST(h_signal_significance);
-    WRITE_HIST(h_energy_vs_time_low);
-    WRITE_HIST(h_energy_vs_time_high);
-    WRITE_HIST(h_michel_energy_predicted);
-    WRITE_HIST(h_scaled_sideband);
-    WRITE_HIST(h_michel_background_predicted);
-    WRITE_HIST(h_final_subtracted);
-    WRITE_HIST(h_low_pe_signal_norm);
-    WRITE_HIST(h_low_pe_sideband_norm);
-    WRITE_HIST(h_scaled_sideband_norm);
-    WRITE_HIST(h_michel_background_predicted_norm);
-    WRITE_HIST(h_final_subtracted_norm);
-    
-    rootFile->Write();
     cout << "All histograms saved to ROOT file" << endl;
+}
+
+// Function to create pink shaded area under histogram
+void createPinkShadedArea(TH1D* hist, TCanvas* canvas) {
+    // Create a filled area under the histogram
+    TGraph* graph = new TGraph();
+    int pointIndex = 0;
     
-    #undef WRITE_HIST
+    // Add points for the filled area
+    for (int i = 1; i <= hist->GetNbinsX(); i++) {
+        double x = hist->GetBinCenter(i);
+        double y = hist->GetBinContent(i);
+        graph->SetPoint(pointIndex, x, 0);
+        pointIndex++;
+        graph->SetPoint(pointIndex, x, y);
+        pointIndex++;
+    }
+    
+    // Add the last point to close the polygon
+    double lastX = hist->GetBinCenter(hist->GetNbinsX());
+    graph->SetPoint(pointIndex, lastX, 0);
+    
+    // Set pink color with transparency
+    graph->SetFillColor(kPink);
+    graph->SetFillStyle(1001); // Solid fill
+    graph->SetLineColor(kPink);
+    
+    // Draw the filled area
+    graph->Draw("F SAME");
 }
 
 int main(int argc, char *argv[]) {
@@ -654,13 +655,15 @@ int main(int argc, char *argv[]) {
 
     std::vector<std::pair<Long64_t, string>> file_times;
     for (const auto& file : inputFiles) {
-        std::unique_ptr<TFile> f_tmp(TFile::Open(file.c_str()));
-        if (!f_tmp || f_tmp->IsZombie()) {
+        TFile f_tmp(file.c_str());
+        if (f_tmp.IsZombie()) {
             cerr << "Warning: Cannot open " << file << " for timestamp sorting, skipping" << endl;
+            f_tmp.Close();
             continue;
         }
-        auto tsstart = dynamic_cast<TParameter<Long64_t>*>(f_tmp->Get("starttime"));
+        auto tsstart = (TParameter<Long64_t>*)f_tmp.Get("starttime");
         Long64_t ts = tsstart ? tsstart->GetVal() : 0;
+        f_tmp.Close();
         file_times.emplace_back(ts, file);
     }
     std::sort(file_times.begin(), file_times.end());
@@ -671,7 +674,7 @@ int main(int argc, char *argv[]) {
 
     // Create ROOT file for saving all histograms
     string rootFileName = OUTPUT_DIR + "/AnalysisResults.root";
-    std::unique_ptr<TFile> rootFile(new TFile(rootFileName.c_str(), "RECREATE"));
+    TFile* rootFile = new TFile(rootFileName.c_str(), "RECREATE");
     if (!rootFile || rootFile->IsZombie()) {
         cerr << "Error: Could not create ROOT file " << rootFileName << endl;
         return -1;
@@ -686,6 +689,7 @@ int main(int argc, char *argv[]) {
 
     if (gSystem->AccessPathName(calibFileName.c_str())) {
         cerr << "Error: Calibration file " << calibFileName << " not found" << endl;
+        rootFile->Close();
         return -1;
     }
 
@@ -698,6 +702,7 @@ int main(int argc, char *argv[]) {
     }
     if (!anyInputFileExists) {
         cerr << "Error: No input files found" << endl;
+        rootFile->Close();
         return -1;
     }
 
@@ -727,7 +732,7 @@ int main(int argc, char *argv[]) {
 
     std::map<int, int> trigger_counts;
 
-    // Define histograms
+    // Define all histograms
     TH1D* h_muon_energy = new TH1D("muon_energy", "Muon Energy Distribution (with Michel Electrons);Energy (p.e.);Counts/7 p.e.", 500, -500, 3000);
     TH1D* h_muon_all = new TH1D("muon_all", "All Muon Energy Distribution;Energy (p.e.);Counts/6 p.e.", 500, 0, 3000);
     TH1D* h_michel_energy = new TH1D("michel_energy", "Michel Electron Energy Distribution;Energy (p.e.);Counts/8 p.e.", 100, 0, 800);
@@ -798,15 +803,15 @@ int main(int argc, char *argv[]) {
             continue;
         }
 
-        std::unique_ptr<TFile> f(TFile::Open(inputFileName.c_str()));
+        TFile *f = new TFile(inputFileName.c_str());
         cout << "Processing file: " << inputFileName << endl;
 
         Long64_t run_starttime = 0;
-        auto tsstart = dynamic_cast<TParameter<Long64_t>*>(f->Get("starttime"));
+        auto tsstart = (TParameter<Long64_t> *) f->Get("starttime");
         if (tsstart) {
             run_starttime = tsstart->GetVal();
             cout << "Run Start Time (Unix Timestamp): " << run_starttime << endl;
-            time_t rawtime = static_cast<time_t>(run_starttime);
+            time_t rawtime = (time_t)run_starttime;
             struct tm *timeinfo = localtime(&rawtime);
             cout << "Run Start Time (Local Time): " << asctime(timeinfo);
             timeinfo->tm_min = 0;
@@ -814,12 +819,14 @@ int main(int argc, char *argv[]) {
             run_starttime = mktime(timeinfo);
         } else {
             cerr << "Warning: 'starttime' not found in file " << inputFileName << ". Skipping file." << endl;
+            f->Close();
             continue;
         }
 
-        TTree* t = dynamic_cast<TTree*>(f->Get("tree"));
+        TTree* t = (TTree*)f->Get("tree");
         if (!t) {
             cout << "Could not find tree in file: " << inputFileName << endl;
+            f->Close();
             continue;
         }
 
@@ -915,26 +922,8 @@ int main(int argc, char *argv[]) {
             int pulse_at_end_count = 0;
             std::vector<double> veto_energies(10, 0);
 
-            // Verify trigger bits
-            bool trigger_found = false;
             for (int iChan = 0; iChan < 23; iChan++) {
-                if (triggerBits & (1 << iChan)) {
-                    for (int i = 0; i < ADCSIZE; i++) {
-                        double iBinContent = adcVal[iChan][i] - baselineMean[iChan];
-                        if (iBinContent >= TRIGGER_THRESHOLDS[iChan]) {
-                            trigger_found = true;
-                            break;
-                        }
-                    }
-                }
-                if (trigger_found) break;
-            }
-            if (!trigger_found) {
-                continue;
-            }
-
-            for (int iChan = 0; iChan < 23; iChan++) {
-                if (pulseH[iChan] < TRIGGER_THRESHOLDS[iChan]) continue;
+                if (pulseH[iChan] < PULSE_THRESHOLD) continue;
 
                 for (int i = 0; i < ADCSIZE; i++) {
                     h_wf.SetBinContent(i + 1, adcVal[iChan][i] - baselineMean[iChan]);
@@ -960,7 +949,7 @@ int main(int argc, char *argv[]) {
                     double iBinContent = h_wf.GetBinContent(iBin);
                     if (iBin > 15) allPulseEnergy += iBinContent;
 
-                    if (!onPulse && iBinContent >= TRIGGER_THRESHOLDS[iChan]) {
+                    if (!onPulse && iBinContent >= PULSE_THRESHOLD) {
                         onPulse = true;
                         thresholdBin = iBin;
                         peakBin = iBin;
@@ -1237,6 +1226,9 @@ int main(int argc, char *argv[]) {
         }
 
         file_cosmic_infos.push_back({run_starttime, file_cosmic_count});
+
+        f->Close();
+        delete f;
     }
 
     cout << "=== 90 p.e. EVENT COUNT COMPARISON ===" << endl;
@@ -1291,47 +1283,8 @@ int main(int argc, char *argv[]) {
     }
     cout << "------------------------\n";
 
-    // Create output directory for plots
-    gSystem->mkdir((OUTPUT_DIR + "/plots").c_str(), kTRUE);
-
-    std::unique_ptr<TCanvas> c(new TCanvas("c", "Analysis Plots", 1200, 800));
-    gStyle->SetOptStat(1111);
-    gStyle->SetOptFit(1111);
-
-    // Muon Energy
-    c->Clear();
-    h_muon_energy->SetLineColor(kBlue);
-    h_muon_energy->Draw();
-    c->Update();
-    string plotName = OUTPUT_DIR + "/plots/Muon_Energy.png";
-    c->SaveAs(plotName.c_str());
-    cout << "Saved plot: " << plotName << endl;
-
-    // All Muon Energy
-    c->Clear();
-    h_muon_all->SetLineColor(kBlue);
-    h_muon_all->Draw();
-    c->Update();
-    plotName = OUTPUT_DIR + "/plots/Muon_All_Energy.png";
-    c->SaveAs(plotName.c_str());
-    cout << "Saved plot: " << plotName << endl;
-
-    // Michel Energy
-    c->Clear();
-    h_michel_energy->SetLineColor(kRed);
-    h_michel_energy->Draw();
-    c->Update();
-    plotName = OUTPUT_DIR + "/plots/Michel_Energy.png";
-    c->SaveAs(plotName.c_str());
-    cout << "Saved plot: " << plotName << endl;
-
     // Michel dt with fit
-    c->Clear();
-    h_dt_michel->SetLineWidth(2);
-    h_dt_michel->SetLineColor(kBlack);
-    h_dt_michel->GetXaxis()->SetTitle("Time to previous event (Muon) [#mus]");
-    h_dt_michel->Draw("HIST");
-
+    cout << "\n=== Fitting Michel dt histogram ===" << endl;
     TF1* expFit = nullptr;
     if (h_dt_michel->GetEntries() > 5) {
         double integral = h_dt_michel->Integral(h_dt_michel->FindBin(FIT_MIN), h_dt_michel->FindBin(FIT_MAX));
@@ -1378,160 +1331,12 @@ int main(int argc, char *argv[]) {
         expFit->SetLineWidth(3);
 
         int fitStatus = h_dt_michel->Fit(expFit, "RE+", "SAME", FIT_MIN, FIT_MAX);
-        expFit->Draw("SAME");
-
-        gPad->Update();
-        TPaveStats *stats = (TPaveStats*)h_dt_michel->FindObject("stats");
-        if (stats) {
-            stats->SetX1NDC(0.6);
-            stats->SetX2NDC(0.9);
-            stats->SetY1NDC(0.6);
-            stats->SetY2NDC(0.9);
-            stats->SetTextColor(kRed);
-        }
-
-        double N0 = expFit->GetParameter(0);
-        double N0_err = expFit->GetParError(0);
-        double tau = expFit->GetParameter(1);
-        double tau_err = expFit->GetParError(1);
-        double C = expFit->GetParameter(2);
-        double C_err = expFit->GetParError(2);
-        double chi2 = expFit->GetChisquare();
-        int ndf = expFit->GetNDF();
-        double chi2_ndf = ndf > 0 ? chi2 / ndf : 0;
-
-        cout << "Exponential Fit Results (Michel dt, " << FIT_MIN << "-" << FIT_MAX << " µs):\n";
-        cout << "Fit Status: " << fitStatus << " (0 = success)\n";
-        cout << Form("τ = %.4f ± %.4f µs", tau, tau_err) << endl;
-        cout << Form("N₀ = %.1f ± %.1f", N0, N0_err) << endl;
-        cout << Form("C = %.1f ± %.1f", C, C_err) << endl;
-        cout << Form("χ²/NDF = %.4f", chi2_ndf) << endl;
-        cout << "----------------------------------------" << endl;
     } else {
         cout << "Warning: h_dt_michel has insufficient entries (" << h_dt_michel->GetEntries() 
              << "), skipping exponential fit" << endl;
     }
 
-    c->Update();
-    plotName = OUTPUT_DIR + "/plots/Michel_dt.png";
-    c->SaveAs(plotName.c_str());
-    cout << "Saved plot: " << plotName << endl;
-
-    if (expFit) delete expFit;
-
-    // Energy vs dt
-    c->Clear();
-    h_energy_vs_dt->SetStats(0);
-    h_energy_vs_dt->GetXaxis()->SetTitle("dt (#mus)");
-    h_energy_vs_dt->Draw("COLZ");
-    c->Update();
-    plotName = OUTPUT_DIR + "/plots/Michel_Energy_vs_dt.png";
-    c->SaveAs(plotName.c_str());
-    cout << "Saved plot: " << plotName << endl;
-
-    // Side Veto Muon
-    c->Clear();
-    h_side_vp_muon->SetLineColor(kMagenta);
-    h_side_vp_muon->Draw();
-    c->Update();
-    plotName = OUTPUT_DIR + "/plots/Side_Veto_Muon.png";
-    c->SaveAs(plotName.c_str());
-    cout << "Saved plot: " << plotName << endl;
-
-    // Top Veto Muon
-    c->Clear();
-    h_top_vp_muon->SetLineColor(kCyan);
-    h_top_vp_muon->Draw();
-    c->Update();
-    plotName = OUTPUT_DIR + "/plots/Top_Veto_Muon.png";
-    c->SaveAs(plotName.c_str());
-    cout << "Saved plot: " << plotName << endl;
-
-    // Trigger Bits
-    c->Clear();
-    h_trigger_bits->SetLineColor(kGreen);
-    h_trigger_bits->Draw();
-    c->Update();
-    plotName = OUTPUT_DIR + "/plots/TriggerBits_Distribution.png";
-    c->SaveAs(plotName.c_str());
-    cout << "Saved plot: " << plotName << endl;
-
-    // Peak Position RMS
-    c->Clear();
-    h_peak_position_rms->Draw();
-    c->Update();
-    plotName = OUTPUT_DIR + "/plots/Peak_Position_RMS.png";
-    c->SaveAs(plotName.c_str());
-    cout << "Saved plot: " << plotName << endl;
-
-    // Good vs Bad Events
-    c->Clear();
-    h_good_vs_bad->GetXaxis()->SetBinLabel(1, "Good Events");
-    h_good_vs_bad->GetXaxis()->SetBinLabel(2, "Bad Events");
-    h_good_vs_bad->Draw("BAR");
-    c->Update();
-    plotName = OUTPUT_DIR + "/plots/Good_vs_Bad_Events.png";
-    c->SaveAs(plotName.c_str());
-    cout << "Saved plot: " << plotName << endl;
-
-    // Create veto panel plots
-    createVetoPanelPlots(h_veto_panel, OUTPUT_DIR + "/plots");
-
-    // Isolated PE
-    c->Clear();
-    h_isolated_pe->SetLineColor(kBlack);
-    h_isolated_pe->Draw();
-    c->Update();
-    plotName = OUTPUT_DIR + "/plots/Isolated_PE.png";
-    c->SaveAs(plotName.c_str());
-    cout << "Saved plot: " << plotName << endl;
-
-    // Low Energy Isolated
-    c->Clear();
-    h_low_iso->SetLineColor(kBlack);
-    h_low_iso->Draw();
-    c->Update();
-    plotName = OUTPUT_DIR + "/plots/Low_Energy_Isolated.png";
-    c->SaveAs(plotName.c_str());
-    cout << "Saved plot: " << plotName << endl;
-
-    // High Energy Isolated
-    c->Clear();
-    h_high_iso->SetLineColor(kBlack);
-    h_high_iso->Draw();
-    c->Update();
-    plotName = OUTPUT_DIR + "/plots/High_Energy_Isolated.png";
-    c->SaveAs(plotName.c_str());
-    cout << "Saved plot: " << plotName << endl;
-
-    // DeltaT High to Low
-    c->Clear();
-    h_dt_prompt_delayed->SetLineColor(kBlack);
-    h_dt_prompt_delayed->Draw();
-    c->Update();
-    plotName = OUTPUT_DIR + "/plots/DeltaT_High_to_Low.png";
-    c->SaveAs(plotName.c_str());
-    cout << "Saved plot: " << plotName << endl;
-
     // DeltaT Low to Muon with fit
-    std::unique_ptr<TCanvas> c_low_muon(new TCanvas("c_low_muon", "DeltaT Low to Muon", 1200, 800));
-    c_low_muon->SetLeftMargin(0.15);
-    c_low_muon->SetRightMargin(0.08);
-    c_low_muon->SetBottomMargin(0.12);
-    c_low_muon->SetTopMargin(0.08);
-
-    h_dt_low_muon->SetLineWidth(2);
-    h_dt_low_muon->SetLineColor(kBlue);
-    h_dt_low_muon->SetFillColor(kBlue);
-    h_dt_low_muon->SetFillStyle(3001);
-    h_dt_low_muon->GetXaxis()->SetTitleSize(0.04);
-    h_dt_low_muon->GetYaxis()->SetTitleSize(0.05);
-    h_dt_low_muon->GetXaxis()->SetLabelSize(0.04);
-    h_dt_low_muon->GetYaxis()->SetLabelSize(0.04);
-    h_dt_low_muon->SetTitle("#Delta t: Low Energy Isolated to Muon");
-
-    h_dt_low_muon->Draw("HIST");
-
     TF1* expFit_low_muon = nullptr;
     if (h_dt_low_muon->GetEntries() > 10) {
         expFit_low_muon = new TF1("expFit_low_muon", ExpFit, FIT_MIN_LOW_MUON, FIT_MAX_LOW_MUON, 3);
@@ -1559,94 +1364,9 @@ int main(int argc, char *argv[]) {
         expFit_low_muon->SetParLimits(2, -C_init * 10, C_init * 10);
 
         int fitStatus = h_dt_low_muon->Fit(expFit_low_muon, "RE+", "", FIT_MIN_LOW_MUON, FIT_MAX_LOW_MUON);
-
-        expFit_low_muon->SetLineColor(kRed);
-        expFit_low_muon->SetLineWidth(3);
-        expFit_low_muon->Draw("SAME");
-
-        gPad->Update();
-        TPaveStats *stats = (TPaveStats*)h_dt_low_muon->FindObject("stats");
-        if (stats) {
-            stats->SetX1NDC(0.6);
-            stats->SetX2NDC(0.9);
-            stats->SetY1NDC(0.7);
-            stats->SetY2NDC(0.95);
-            stats->SetTextColor(kRed);
-        }
-
-        double N0 = expFit_low_muon->GetParameter(0);
-        double N0_err = expFit_low_muon->GetParError(0);
-        double tau = expFit_low_muon->GetParameter(1);
-        double tau_err = expFit_low_muon->GetParError(1);
-        double C = expFit_low_muon->GetParameter(2);
-        double C_err = expFit_low_muon->GetParError(2);
-        double chi2 = expFit_low_muon->GetChisquare();
-        int ndf = expFit_low_muon->GetNDF();
-        double chi2_ndf = ndf > 0 ? chi2 / ndf : 0;
-
-        cout << "Exponential Fit Results (Low to Muon dt, " << FIT_MIN_LOW_MUON << "-" << FIT_MAX_LOW_MUON << " µs):\n";
-        cout << "Fit Status: " << fitStatus << " (0 = success)\n";
-        cout << Form("N_{0} = %.1f ± %.1f", N0, N0_err) << endl;
-        cout << Form("τ = %.4f ± %.4f µs", tau, tau_err) << endl;
-        cout << Form("C = %.1f ± %.1f", C, C_err) << endl;
-        cout << Form("χ²/NDF = %.4f", chi2_ndf) << endl;
-        cout << "----------------------------------------" << endl;
-
-        // Neutron purity analysis
-        cout << "=== Neutron Purity Analysis ===" << endl;
-        double bw = h_dt_low_muon->GetBinWidth(1);
-        double N0_rate = N0;
-        double C_rate = C;
-        double t_min = 16.0;
-
-        for (int time_cut = 16; time_cut <= 1000; time_cut += 10) {
-            double sig = N0_rate * exp(-time_cut / tau);
-            double bkg = C_rate;
-            
-            if (bkg > 0 && sig > 0) {
-                double neutron_ratio = sig / bkg;
-                double significance = sig / sqrt(sig + bkg);
-                h_neutron_richness->Fill(time_cut, neutron_ratio);
-                h_signal_significance->Fill(time_cut, significance);
-            }
-            
-            if (time_cut % 100 == 0) {
-                cout << "Time cut " << time_cut << " µs: Signal=" << sig 
-                     << ", Bkg=" << bkg << ", Ratio=" << sig/bkg 
-                     << ", Significance=" << sig/sqrt(sig + bkg) << endl;
-            }
-        }
-    } else {
-        cout << "Warning: h_dt_low_muon has insufficient entries (" << h_dt_low_muon->GetEntries() 
-             << "), skipping exponential fit" << endl;
     }
 
-    c_low_muon->Update();
-    plotName = OUTPUT_DIR + "/plots/DeltaT_Low_to_Muon.png";
-    c_low_muon->SaveAs(plotName.c_str());
-    cout << "Saved plot: " << plotName << endl;
-
-    if (expFit_low_muon) delete expFit_low_muon;
-
     // DeltaT High to Muon with fit
-    std::unique_ptr<TCanvas> c_high_muon(new TCanvas("c_high_muon", "DeltaT High to Muon", 1200, 800));
-    c_high_muon->SetLeftMargin(0.12);
-    c_high_muon->SetRightMargin(0.08);
-    c_high_muon->SetBottomMargin(0.12);
-    c_high_muon->SetTopMargin(0.08);
-
-    h_dt_high_muon->SetLineWidth(2);
-    h_dt_high_muon->SetLineColor(kBlue);
-    h_dt_high_muon->SetFillColor(kBlack);
-    h_dt_high_muon->SetFillStyle(3001);
-    h_dt_high_muon->GetXaxis()->SetTitleSize(0.05);
-    h_dt_high_muon->GetYaxis()->SetTitleSize(0.05);
-    h_dt_high_muon->GetXaxis()->SetLabelSize(0.04);
-    h_dt_high_muon->GetYaxis()->SetLabelSize(0.04);
-    h_dt_high_muon->SetTitle("#Delta t: High Energy Isolated to Muon");
-
-    h_dt_high_muon->Draw("HIST");
-
     TF1* expFit_high_muon = nullptr;
     if (h_dt_high_muon->GetEntries() > 10) {
         expFit_high_muon = new TF1("expFit_high_muon", ExpFit, FIT_MIN_LOW_MUON, FIT_MAX_LOW_MUON, 3);
@@ -1674,49 +1394,7 @@ int main(int argc, char *argv[]) {
         expFit_high_muon->SetParLimits(2, -C_init * 10, C_init * 10);
 
         int fitStatus = h_dt_high_muon->Fit(expFit_high_muon, "RE+", "", FIT_MIN_LOW_MUON, FIT_MAX_LOW_MUON);
-
-        expFit_high_muon->SetLineColor(kRed);
-        expFit_high_muon->SetLineWidth(3);
-        expFit_high_muon->Draw("SAME");
-
-        gPad->Update();
-        TPaveStats *stats = (TPaveStats*)h_dt_high_muon->FindObject("stats");
-        if (stats) {
-            stats->SetX1NDC(0.6);
-            stats->SetX2NDC(0.9);
-            stats->SetY1NDC(0.7);
-            stats->SetY2NDC(0.95);
-            stats->SetTextColor(kRed);
-        }
-
-        double N0 = expFit_high_muon->GetParameter(0);
-        double N0_err = expFit_high_muon->GetParError(0);
-        double tau = expFit_high_muon->GetParameter(1);
-        double tau_err = expFit_high_muon->GetParError(1);
-        double C = expFit_high_muon->GetParameter(2);
-        double C_err = expFit_high_muon->GetParError(2);
-        double chi2 = expFit_high_muon->GetChisquare();
-        int ndf = expFit_high_muon->GetNDF();
-        double chi2_ndf = ndf > 0 ? chi2 / ndf : 0;
-
-        cout << "Exponential Fit Results (High to Muon dt, " << FIT_MIN_LOW_MUON << "-" << FIT_MAX_LOW_MUON << " µs):\n";
-        cout << "Fit Status: " << fitStatus << " (0 = success)\n";
-        cout << Form("N_{0} = %.1f ± %.1f", N0, N0_err) << endl;
-        cout << Form("τ = %.4f ± %.4f µs", tau, tau_err) << endl;
-        cout << Form("C = %.1f ± %.1f", C, C_err) << endl;
-        cout << Form("χ²/NDF = %.4f", chi2_ndf) << endl;
-        cout << "----------------------------------------" << endl;
-    } else {
-        cout << "Warning: h_dt_high_muon has insufficient entries (" << h_dt_high_muon->GetEntries() 
-             << "), skipping exponential fit" << endl;
     }
-
-    c_high_muon->Update();
-    plotName = OUTPUT_DIR + "/plots/DeltaT_High_to_Muon.png";
-    c_high_muon->SaveAs(plotName.c_str());
-    cout << "Saved plot: " << plotName << endl;
-
-    if (expFit_high_muon) delete expFit_high_muon;
 
     cout << "=== Michel Background Subtraction with Consistent Fit Range ===" << endl;
 
@@ -1761,56 +1439,18 @@ int main(int argc, char *argv[]) {
             C_err = michel_fit->GetParError(2);
             chi2_ndf_fit = michel_fit->GetChisquare() / michel_fit->GetNDF();
             
-            cout << "Michel Fit Results (" << MICHEL_FIT_RANGE_MIN << "-" << MICHEL_FIT_RANGE_MAX << " μs):" << endl;
-            cout << Form("N₀ = %.1f ± %.1f", N0_fit, N0_err) << endl;
-            cout << Form("τ = %.3f ± %.3f μs", tau_fit, tau_err) << endl;
-            cout << Form("C = %.1f ± %.1f", C_fit, C_err) << endl;
-            cout << Form("χ²/NDF = %.2f", chi2_ndf_fit) << endl;
-            
             fit_michels_2_16 = calculateFitMichels(N0_fit, tau_fit, C_fit, MICHEL_FIT_RANGE_MIN, MICHEL_FIT_RANGE_MAX, 0.1);
-            
             predicted_michels = calculateFitMichels(N0_fit, tau_fit, C_fit, MICHEL_PREDICTION_MIN, MICHEL_PREDICTION_MAX, 0.1);
-            
-            predicted_michels_err = 0.0;
-            const double TIME_BIN_SIZE = 0.1;
-            
-            for (int i = 0; i < static_cast<int>((MICHEL_PREDICTION_MAX - MICHEL_PREDICTION_MIN) / TIME_BIN_SIZE); i++) {
-                double t_start = MICHEL_PREDICTION_MIN + i * TIME_BIN_SIZE;
-                double t_end = t_start + TIME_BIN_SIZE;
-                double t_center = t_start + (TIME_BIN_SIZE / 2.0);
-                
-                if (t_end > MICHEL_PREDICTION_MAX) break;
-                
-                double dN_dN0 = exp(-t_center / tau_fit);
-                double dN_dtau = N0_fit * (t_center / (tau_fit * tau_fit)) * exp(-t_center / tau_fit);
-                double bin_variance = pow(dN_dN0 * N0_err, 2) + pow(dN_dtau * tau_err, 2);
-                predicted_michels_err += bin_variance;
-            }
-            
-            predicted_michels_err = sqrt(predicted_michels_err);
-            
-            cout << Form("Fit Michels (1-10 μs): %.1f", fit_michels_2_16) << endl;
-            cout << Form("Predicted Michels (16-100 μs): %.1f ± %.1f", predicted_michels, predicted_michels_err) << endl;
-        } else {
-            cout << "Warning: Michel fit failed with status " << fit_status << endl;
         }
         
         delete michel_fit;
-    } else {
-        cout << "Warning: Insufficient Michel events in sideband for fitting: " 
-             << h_dt_michel_sideband->GetEntries() << endl;
     }
 
     saveLiveTimeInfo(totalLiveTime, fit_michels_2_16, predicted_michels, predicted_michels_err, OUTPUT_DIR);
 
     double michel_scale = (predicted_michels > 0 && fit_michels_2_16 > 0) ? predicted_michels / fit_michels_2_16 : 0;
     
-    cout << "=== Improved Michel Scaling Factor Calculation ===" << endl;
-    cout << "Predicted Michels (16-100 μs): " << predicted_michels << endl;
-    cout << "Fit Michels (1-10 μs): " << fit_michels_2_16 << endl;
-    cout << "Scaling factor (Predicted/Fit): " << michel_scale << endl;
-    cout << "==================================================" << endl;
-
+    // Create background subtraction histograms
     h_michel_energy_predicted = (TH1D*)h_michel_energy_fit_range->Clone("michel_energy_predicted");
     h_michel_energy_predicted->Scale(michel_scale);
 
@@ -1825,9 +1465,6 @@ int main(int argc, char *argv[]) {
     h_michel_background_predicted = (TH1D*)h_michel_energy_predicted->Clone("michel_background_predicted");
 
     h_final_subtracted = (TH1D*)h_low_pe_signal->Clone("after_sideband_sub");
-    h_final_subtracted->Add(h_scaled_sideband, -1.0);
-    double after_sideband_events = calculateTotalEvents(h_final_subtracted);
-
     double final_subtracted_corrected = signal_events - scaled_sideband_events - predicted_michels;
 
     for (int i = 1; i <= h_final_subtracted->GetNbinsX(); i++) {
@@ -1838,36 +1475,14 @@ int main(int argc, char *argv[]) {
         h_final_subtracted->SetBinContent(i, corrected_bin);
     }
 
-    double final_events = final_subtracted_corrected;
-
-    double manual_calculation = signal_events - scaled_sideband_events - predicted_michels;
-    double discrepancy = final_events - manual_calculation;
-
-    cout << "=== CORRECTED Low Energy Subtraction Results ===" << endl;
-    cout << "Signal region (16-100 μs) events: " << signal_events << endl;
-    cout << "Sideband region (1000-1200 μs) events: " << sideband_events << endl;
-    cout << "Sideband scale factor: " << sideband_scale_factor << endl;
-    cout << "Scaled neutron-free background: " << scaled_sideband_events << endl;
-    cout << "Predicted Michel background: " << predicted_michels << " ± " << predicted_michels_err << endl;
-    cout << "After sideband subtraction: " << after_sideband_events << endl;
-    cout << "Final subtracted events: " << final_subtracted_corrected << endl;
-    cout << "Manual verification (signal - scaled_bkg - michel): " << manual_calculation << endl;
-    cout << "Discrepancy: " << discrepancy << endl;
-    cout << "================================================" << endl;
-
-    if (predicted_michels > after_sideband_events * 0.5) {
-        cout << "WARNING: Michel background seems too large compared to signal!" << endl;
-        cout << "Michel background is " << (predicted_michels/after_sideband_events)*100 << "% of sideband-subtracted signal" << endl;
-    }
-
     // Create normalized histograms
+    double norm_factor = 1.0 / liveTimeDays;
     h_low_pe_signal_norm = (TH1D*)h_low_pe_signal->Clone("low_pe_signal_norm");
     h_low_pe_sideband_norm = (TH1D*)h_low_pe_sideband->Clone("low_pe_sideband_norm");
     h_scaled_sideband_norm = (TH1D*)h_scaled_sideband->Clone("scaled_sideband_norm");
     h_michel_background_predicted_norm = (TH1D*)h_michel_background_predicted->Clone("michel_background_predicted_norm");
     h_final_subtracted_norm = (TH1D*)h_final_subtracted->Clone("final_subtracted_norm");
 
-    double norm_factor = 1.0 / liveTimeDays;
     h_low_pe_signal_norm->Scale(norm_factor);
     h_low_pe_sideband_norm->Scale(norm_factor);
     h_scaled_sideband_norm->Scale(norm_factor);
@@ -1881,8 +1496,494 @@ int main(int argc, char *argv[]) {
         h_final_subtracted_norm->SetBinContent(i, corrected_bin);
     }
 
+    // Create plots - all in the main output directory
+    cout << "\n=== Creating plots ===" << endl;
+    
+    // Create main canvas
+    TCanvas *c_main = new TCanvas("c_main", "Analysis Plots", 1200, 800);
+    gStyle->SetOptStat(1111);
+    gStyle->SetOptFit(1111);
+
+    // Plot 1: Muon energy with Michel electrons
+    c_main->Clear();
+    h_muon_energy->SetLineColor(kBlue);
+    h_muon_energy->Draw();
+    c_main->Update();
+    string plotName = OUTPUT_DIR + "/Muon_Energy_with_Michel.png";
+    c_main->SaveAs(plotName.c_str());
+    cout << "Saved plot: " << plotName << endl;
+
+    // Plot 2: All muon energy
+    c_main->Clear();
+    h_muon_all->SetLineColor(kBlue);
+    h_muon_all->Draw();
+    c_main->Update();
+    plotName = OUTPUT_DIR + "/Muon_All_Energy.png";
+    c_main->SaveAs(plotName.c_str());
+    cout << "Saved plot: " << plotName << endl;
+
+    // Plot 3: Michel energy
+    c_main->Clear();
+    h_michel_energy->SetLineColor(kRed);
+    h_michel_energy->Draw();
+    c_main->Update();
+    plotName = OUTPUT_DIR + "/Michel_Energy.png";
+    c_main->SaveAs(plotName.c_str());
+    cout << "Saved plot: " << plotName << endl;
+
+    // Plot 4: Michel dt with fit
+    c_main->Clear();
+    h_dt_michel->SetLineWidth(2);
+    h_dt_michel->SetLineColor(kBlack);
+    h_dt_michel->Draw("HIST");
+    if (expFit) expFit->Draw("same");
+    c_main->Update();
+    plotName = OUTPUT_DIR + "/Michel_dt_with_fit.png";
+    c_main->SaveAs(plotName.c_str());
+    cout << "Saved plot: " << plotName << endl;
+
+    // Plot 5: Energy vs dt (2D)
+    c_main->Clear();
+    h_energy_vs_dt->SetStats(0);
+    h_energy_vs_dt->Draw("COLZ");
+    c_main->Update();
+    plotName = OUTPUT_DIR + "/Michel_Energy_vs_dt.png";
+    c_main->SaveAs(plotName.c_str());
+    cout << "Saved plot: " << plotName << endl;
+
+    // Plot 6: Side veto for muons
+    c_main->Clear();
+    h_side_vp_muon->SetLineColor(kMagenta);
+    h_side_vp_muon->Draw();
+    c_main->Update();
+    plotName = OUTPUT_DIR + "/Side_Veto_Muon.png";
+    c_main->SaveAs(plotName.c_str());
+    cout << "Saved plot: " << plotName << endl;
+
+    // Plot 7: Top veto for muons
+    c_main->Clear();
+    h_top_vp_muon->SetLineColor(kCyan);
+    h_top_vp_muon->Draw();
+    c_main->Update();
+    plotName = OUTPUT_DIR + "/Top_Veto_Muon.png";
+    c_main->SaveAs(plotName.c_str());
+    cout << "Saved plot: " << plotName << endl;
+
+    // Plot 8: Trigger bits
+    c_main->Clear();
+    h_trigger_bits->SetLineColor(kGreen);
+    h_trigger_bits->Draw();
+    c_main->Update();
+    plotName = OUTPUT_DIR + "/TriggerBits_Distribution.png";
+    c_main->SaveAs(plotName.c_str());
+    cout << "Saved plot: " << plotName << endl;
+
+    // Plot 9: Isolated PE
+    c_main->Clear();
+    h_isolated_pe->SetLineColor(kBlack);
+    h_isolated_pe->Draw();
+    c_main->Update();
+    plotName = OUTPUT_DIR + "/Isolated_PE.png";
+    c_main->SaveAs(plotName.c_str());
+    cout << "Saved plot: " << plotName << endl;
+
+    // Plot 10: Low energy isolated
+    c_main->Clear();
+    h_low_iso->SetLineColor(kBlack);
+    h_low_iso->Draw();
+    c_main->Update();
+    plotName = OUTPUT_DIR + "/Low_Energy_Isolated.png";
+    c_main->SaveAs(plotName.c_str());
+    cout << "Saved plot: " << plotName << endl;
+
+    // Plot 11: High energy isolated
+    c_main->Clear();
+    h_high_iso->SetLineColor(kBlack);
+    h_high_iso->Draw();
+    c_main->Update();
+    plotName = OUTPUT_DIR + "/High_Energy_Isolated.png";
+    c_main->SaveAs(plotName.c_str());
+    cout << "Saved plot: " << plotName << endl;
+
+    // Plot 12: DeltaT high to low
+    c_main->Clear();
+    h_dt_prompt_delayed->SetLineColor(kBlack);
+    h_dt_prompt_delayed->Draw();
+    c_main->Update();
+    plotName = OUTPUT_DIR + "/DeltaT_High_to_Low.png";
+    c_main->SaveAs(plotName.c_str());
+    cout << "Saved plot: " << plotName << endl;
+
+    // Plot 13: DeltaT low to muon with fit and pink shading
+    TCanvas *c_low_muon = new TCanvas("c_low_muon", "DeltaT Low to Muon", 1200, 800);
+    h_dt_low_muon->SetLineWidth(2);
+    h_dt_low_muon->SetLineColor(kBlue);
+    h_dt_low_muon->SetFillColor(kPink);  // Set pink fill color
+    h_dt_low_muon->SetFillStyle(1001);   // Solid fill
+    
+    // Draw histogram with fill
+    h_dt_low_muon->Draw("HIST F");
+    
+    // Draw histogram outline on top
+    h_dt_low_muon->Draw("HIST SAME");
+    
+    if (expFit_low_muon) {
+        expFit_low_muon->SetLineColor(kRed);
+        expFit_low_muon->SetLineWidth(3);
+        expFit_low_muon->Draw("SAME");
+    }
+    
+    plotName = OUTPUT_DIR + "/DeltaT_Low_to_Muon.png";
+    c_low_muon->SaveAs(plotName.c_str());
+    cout << "Saved plot: " << plotName << endl;
+    delete c_low_muon;
+
+    // Plot 14: DeltaT high to muon with fit and pink shading
+    TCanvas *c_high_muon = new TCanvas("c_high_muon", "DeltaT High to Muon", 1200, 800);
+    h_dt_high_muon->SetLineWidth(2);
+    h_dt_high_muon->SetLineColor(kBlue);
+    h_dt_high_muon->SetFillColor(kPink);  // Set pink fill color
+    h_dt_high_muon->SetFillStyle(1001);   // Solid fill
+    
+    // Draw histogram with fill
+    h_dt_high_muon->Draw("HIST F");
+    
+    // Draw histogram outline on top
+    h_dt_high_muon->Draw("HIST SAME");
+    
+    if (expFit_high_muon) {
+        expFit_high_muon->SetLineColor(kRed);
+        expFit_high_muon->SetLineWidth(3);
+        expFit_high_muon->Draw("SAME");
+    }
+    
+    plotName = OUTPUT_DIR + "/DeltaT_High_to_Muon.png";
+    c_high_muon->SaveAs(plotName.c_str());
+    cout << "Saved plot: " << plotName << endl;
+    delete c_high_muon;
+
+    // Plot 15: Veto panel plots
+    createVetoPanelPlots(h_veto_panel, OUTPUT_DIR);
+
+    // Plot 16: Isolated >=40 PE
+    c_main->Clear();
+    h_isolated_ge40->SetLineColor(kBlack);
+    h_isolated_ge40->Draw();
+    c_main->Update();
+    plotName = OUTPUT_DIR + "/Isolated_GE40_PE.png";
+    c_main->SaveAs(plotName.c_str());
+    cout << "Saved plot: " << plotName << endl;
+
+    // Plot 17: Neutron purity analysis
+    c_main->Clear();
+    c_main->Divide(1,2);
+    c_main->cd(1);
+    h_neutron_richness->SetStats(0);
+    h_neutron_richness->SetLineColor(kBlue);
+    h_neutron_richness->SetLineWidth(3);
+    h_neutron_richness->Draw("HIST");
+    c_main->cd(2);
+    h_signal_significance->SetStats(0);
+    h_signal_significance->SetLineColor(kRed);
+    h_signal_significance->SetLineWidth(3);
+    h_signal_significance->Draw("HIST");
+    c_main->Update();
+    plotName = OUTPUT_DIR + "/Neutron_Purity_Analysis.png";
+    c_main->SaveAs(plotName.c_str());
+    cout << "Saved plot: " << plotName << endl;
+
+    // Plot 18: Energy vs time (2D plots)
+    c_main->Clear();
+    c_main->Divide(1,2);
+    c_main->cd(1);
+    h_energy_vs_time_low->Draw("COLZ");
+    c_main->cd(2);
+    h_energy_vs_time_high->Draw("COLZ");
+    c_main->Update();
+    plotName = OUTPUT_DIR + "/Energy_vs_Time_MultiD.png";
+    c_main->SaveAs(plotName.c_str());
+    cout << "Saved plot: " << plotName << endl;
+
+    // Plot 19: Michel background subtraction method
+    TCanvas *c_michel_method = new TCanvas("c_michel_method", "Michel Background Subtraction Method", 1200, 800);
+    c_michel_method->Divide(2, 1);
+    
+    c_michel_method->cd(1);
+    gPad->SetLogy();
+    TH1D* h_dt_michel_fit_range = (TH1D*)h_dt_michel_sideband->Clone("dt_michel_fit_range");
+    h_dt_michel_fit_range->SetTitle(Form("Michel Time Distribution (%0.1f-%0.1f #mus);Time to Previous Muon (#mus);Counts/0.2#mus", 
+                                        MICHEL_FIT_RANGE_MIN, MICHEL_FIT_RANGE_MAX));
+    h_dt_michel_fit_range->GetXaxis()->SetRangeUser(0, 16);
+    h_dt_michel_fit_range->SetLineColor(kBlue);
+    h_dt_michel_fit_range->SetLineWidth(2);
+    h_dt_michel_fit_range->Draw("HIST");
+
+    c_michel_method->cd(2);
+    gPad->SetLogy();
+    h_michel_energy_fit_range->SetMinimum(0.1);
+    h_michel_energy_fit_range->SetLineColor(kBlue);
+    h_michel_energy_fit_range->SetLineWidth(2);
+    h_michel_energy_fit_range->SetStats(0);
+    h_michel_energy_fit_range->Draw("HIST");
+    h_michel_energy_predicted->SetLineColor(kRed);
+    h_michel_energy_predicted->SetLineWidth(2);
+    h_michel_energy_predicted->SetLineStyle(2);
+    h_michel_energy_predicted->SetStats(0);
+    h_michel_energy_predicted->Draw("HIST SAME");
+
+    TLegend *leg_energy = new TLegend(0.15, 0.80, 0.45, 0.93);
+    leg_energy->SetBorderSize(0);
+    leg_energy->SetFillStyle(0);
+    leg_energy->SetTextSize(0.045);
+    leg_energy->AddEntry(h_michel_energy_fit_range, 
+                        Form("%0.1f-%0.1f #mus", MICHEL_FIT_RANGE_MIN, MICHEL_FIT_RANGE_MAX), "l");
+    leg_energy->AddEntry(h_michel_energy_predicted, 
+                        Form("%0.1f-%0.1f #mus", MICHEL_PREDICTION_MIN, MICHEL_PREDICTION_MAX), "l");
+    leg_energy->Draw();
+
+    plotName = OUTPUT_DIR + "/Michel_Background_Subtraction.png";
+    c_michel_method->SaveAs(plotName.c_str());
+    cout << "Saved plot: " << plotName << endl;
+    delete c_michel_method;
+    delete leg_energy;
+
+    // Plot 20: Sideband subtraction (overlayed plot)
+    TCanvas *c_sideband = new TCanvas("c_sideband", "Low Energy Sideband Subtraction", 1200, 800);
+    c_sideband->SetLeftMargin(0.1);
+    c_sideband->SetRightMargin(0.1);
+    c_sideband->SetBottomMargin(0.1);
+    c_sideband->SetTopMargin(0.1);
+
+    h_low_pe_signal->SetLineColor(kRed);
+    h_low_pe_signal->SetLineWidth(3);
+    h_low_pe_sideband->SetLineColor(kBlue);
+    h_low_pe_sideband->SetLineWidth(3);
+    h_scaled_sideband->SetLineColor(kBlue);
+    h_scaled_sideband->SetLineWidth(3);
+    h_scaled_sideband->SetLineStyle(2);
+
+    h_low_pe_signal->SetStats(0);
+    h_low_pe_sideband->SetStats(0);
+    h_scaled_sideband->SetStats(0);
+
+    h_low_pe_signal->Draw("HIST");
+    h_low_pe_sideband->Draw("HIST same");
+    h_scaled_sideband->Draw("HIST same");
+
+    TLegend *leg_sideband = new TLegend(0.5, 0.65, 0.9, 0.9);
+    leg_sideband->SetTextSize(0.025);
+    leg_sideband->SetTextFont(42);
+    leg_sideband->SetBorderSize(1);
+    leg_sideband->SetFillStyle(0);
+    leg_sideband->AddEntry(h_low_pe_signal, Form("Neutron rich region (16-100 #mus) [%.0f events]", signal_events), "l");
+    leg_sideband->AddEntry(h_low_pe_sideband, Form("Neutron free region (1000-1200 #mus) [%.0f events]", sideband_events), "l");
+    leg_sideband->AddEntry(h_scaled_sideband, Form("Scaled neutron free region [%.1f events]", scaled_sideband_events), "l");
+    leg_sideband->Draw();
+
+    plotName = OUTPUT_DIR + "/Low_Energy_Sideband_Subtraction.png";
+    c_sideband->SaveAs(plotName.c_str());
+    cout << "Saved plot: " << plotName << endl;
+
+    // Plot 21: Complete sideband subtraction with Michel background (overlayed plot)
+    TCanvas *c_sideband_complete = new TCanvas("c_sideband_complete", "Low Energy Sideband Subtraction with Michel Background", 1200, 800);
+    c_sideband_complete->SetLeftMargin(0.1);
+    c_sideband_complete->SetRightMargin(0.1);
+    c_sideband_complete->SetBottomMargin(0.1);
+    c_sideband_complete->SetTopMargin(0.1);
+
+    h_low_pe_signal->SetLineColor(kRed);
+    h_low_pe_signal->SetLineWidth(3);
+    h_scaled_sideband->SetLineColor(kBlue);
+    h_scaled_sideband->SetLineWidth(2);
+    h_scaled_sideband->SetLineStyle(2);
+    h_michel_background_predicted->SetLineColor(kMagenta);
+    h_michel_background_predicted->SetLineWidth(2);
+    h_michel_background_predicted->SetLineStyle(3);
+    h_final_subtracted->SetLineColor(kGreen);
+    h_final_subtracted->SetLineWidth(3);
+
+    h_low_pe_signal->SetStats(0);
+    h_scaled_sideband->SetStats(0);
+    h_michel_background_predicted->SetStats(0);
+    h_final_subtracted->SetStats(0);
+
+    h_low_pe_signal->Draw("HIST");
+    h_scaled_sideband->Draw("HIST SAME");
+    h_michel_background_predicted->Draw("HIST SAME");
+    h_final_subtracted->Draw("HIST SAME");
+
+    TLegend *leg_sideband_complete = new TLegend(0.5, 0.6, 0.9, 0.9);
+    leg_sideband_complete->SetTextSize(0.025);
+    leg_sideband_complete->SetTextFont(42);
+    leg_sideband_complete->SetBorderSize(1);
+    leg_sideband_complete->SetFillStyle(0);
+    leg_sideband_complete->AddEntry(h_low_pe_signal, Form("Neutron rich region (16-100 #mus) [%.0f events]", signal_events), "l");
+    leg_sideband_complete->AddEntry(h_scaled_sideband, Form("Scaled neutron free region [%.1f events]", scaled_sideband_events), "l");
+    leg_sideband_complete->AddEntry(h_michel_background_predicted, Form("Michel background (16-100 #mus) [%.1f events]", predicted_michels), "l");
+    leg_sideband_complete->AddEntry(h_final_subtracted, Form("Final: Signal - ScaledBkg - Michel [%.1f events]", final_subtracted_corrected), "l");
+    leg_sideband_complete->Draw();
+
+    plotName = OUTPUT_DIR + "/Low_Energy_Sideband_Subtraction_Complete.png";
+    c_sideband_complete->SaveAs(plotName.c_str());
+    cout << "Saved plot: " << plotName << endl;
+
+    // Plot 22: Normalized sideband subtraction (overlayed plot)
+    TCanvas *c_sideband_norm = new TCanvas("c_sideband_norm", "Normalized Low Energy Sideband Subtraction", 1200, 800);
+    c_sideband_norm->SetLeftMargin(0.1);
+    c_sideband_norm->SetRightMargin(0.1);
+    c_sideband_norm->SetBottomMargin(0.1);
+    c_sideband_norm->SetTopMargin(0.1);
+
+    h_low_pe_signal_norm->SetLineColor(kRed);
+    h_low_pe_signal_norm->SetLineWidth(3);
+    h_low_pe_sideband_norm->SetLineColor(kBlue);
+    h_low_pe_sideband_norm->SetLineWidth(3);
+    h_scaled_sideband_norm->SetLineColor(kBlue);
+    h_scaled_sideband_norm->SetLineWidth(3);
+    h_scaled_sideband_norm->SetLineStyle(2);
+
+    h_low_pe_signal_norm->SetStats(0);
+    h_low_pe_sideband_norm->SetStats(0);
+    h_scaled_sideband_norm->SetStats(0);
+    
+    h_low_pe_signal_norm->GetYaxis()->SetTitle("Counts per Day");
+    h_low_pe_sideband_norm->GetYaxis()->SetTitle("Counts per Day");
+    h_scaled_sideband_norm->GetYaxis()->SetTitle("Counts per Day");
+
+    h_low_pe_signal_norm->Draw("HIST");
+    h_low_pe_sideband_norm->Draw("HIST same");
+    h_scaled_sideband_norm->Draw("HIST same");
+
+    TLegend *leg_sideband_norm = new TLegend(0.5, 0.65, 0.9, 0.9);
+    leg_sideband_norm->SetTextSize(0.025);
+    leg_sideband_norm->SetTextFont(42);
+    leg_sideband_norm->SetBorderSize(1);
+    leg_sideband_norm->SetFillStyle(0);
+    leg_sideband_norm->AddEntry(h_low_pe_signal_norm, Form("Neutron rich region (16-100 #mus) [%.1f events/day]", 
+                                                          calculateTotalEvents(h_low_pe_signal_norm)), "l");
+    leg_sideband_norm->AddEntry(h_low_pe_sideband_norm, Form("Neutron free region (1000-1200 #mus) [%.1f events/day]", 
+                                                            calculateTotalEvents(h_low_pe_sideband_norm)), "l");
+    leg_sideband_norm->AddEntry(h_scaled_sideband_norm, Form("Scaled neutron free region [%.1f events/day]", 
+                                                            calculateTotalEvents(h_scaled_sideband_norm)), "l");
+    leg_sideband_norm->AddEntry((TObject*)0, Form("Live time: %.6f days", liveTimeDays), "");
+    leg_sideband_norm->Draw();
+
+    plotName = OUTPUT_DIR + "/Normalized_Low_Energy_Sideband_Subtraction.png";
+    c_sideband_norm->SaveAs(plotName.c_str());
+    cout << "Saved plot: " << plotName << endl;
+
+    // Plot 23: Complete normalized sideband subtraction with Michel background (overlayed plot)
+    TCanvas *c_sideband_complete_norm = new TCanvas("c_sideband_complete_norm", "Normalized Low Energy Sideband Subtraction with Michel Background", 1200, 800);
+    c_sideband_complete_norm->SetLeftMargin(0.1);
+    c_sideband_complete_norm->SetRightMargin(0.1);
+    c_sideband_complete_norm->SetBottomMargin(0.1);
+    c_sideband_complete_norm->SetTopMargin(0.1);
+
+    h_low_pe_signal_norm->SetLineColor(kRed);
+    h_low_pe_signal_norm->SetLineWidth(3);
+    h_scaled_sideband_norm->SetLineColor(kBlue);
+    h_scaled_sideband_norm->SetLineWidth(2);
+    h_scaled_sideband_norm->SetLineStyle(2);
+    h_michel_background_predicted_norm->SetLineColor(kMagenta);
+    h_michel_background_predicted_norm->SetLineWidth(2);
+    h_michel_background_predicted_norm->SetLineStyle(3);
+    h_final_subtracted_norm->SetLineColor(kGreen);
+    h_final_subtracted_norm->SetLineWidth(3);
+
+    h_low_pe_signal_norm->SetStats(0);
+    h_scaled_sideband_norm->SetStats(0);
+    h_michel_background_predicted_norm->SetStats(0);
+    h_final_subtracted_norm->SetStats(0);
+    
+    h_low_pe_signal_norm->GetYaxis()->SetTitle("Counts per Day");
+    h_scaled_sideband_norm->GetYaxis()->SetTitle("Counts per Day");
+    h_michel_background_predicted_norm->GetYaxis()->SetTitle("Counts per Day");
+    h_final_subtracted_norm->GetYaxis()->SetTitle("Counts per Day");
+
+    h_low_pe_signal_norm->Draw("HIST");
+    h_scaled_sideband_norm->Draw("HIST SAME");
+    h_michel_background_predicted_norm->Draw("HIST SAME");
+    h_final_subtracted_norm->Draw("HIST SAME");
+
+    TLegend *leg_sideband_complete_norm = new TLegend(0.5, 0.6, 0.9, 0.9);
+    leg_sideband_complete_norm->SetTextSize(0.025);
+    leg_sideband_complete_norm->SetTextFont(42);
+    leg_sideband_complete_norm->SetBorderSize(1);
+    leg_sideband_complete_norm->SetFillStyle(0);
+    leg_sideband_complete_norm->AddEntry(h_low_pe_signal_norm, Form("Neutron rich region (16-100 #mus) [%.1f events/day]", 
+                                                                   calculateTotalEvents(h_low_pe_signal_norm)), "l");
+    leg_sideband_complete_norm->AddEntry(h_scaled_sideband_norm, Form("Scaled neutron free region [%.1f events/day]", 
+                                                                     calculateTotalEvents(h_scaled_sideband_norm)), "l");
+    leg_sideband_complete_norm->AddEntry(h_michel_background_predicted_norm, Form("Michel background (16-100 #mus) [%.1f events/day]", 
+                                                                                predicted_michels / liveTimeDays), "l");
+    leg_sideband_complete_norm->AddEntry(h_final_subtracted_norm, Form("Final: Signal - ScaledBkg - Michel [%.1f events/day]", 
+                                                                      final_subtracted_corrected / liveTimeDays), "l");
+    leg_sideband_complete_norm->AddEntry((TObject*)0, Form("Live time: %.6f days", liveTimeDays), "");
+    leg_sideband_complete_norm->Draw();
+
+    plotName = OUTPUT_DIR + "/Normalized_Low_Energy_Sideband_Subtraction_Complete.png";
+    c_sideband_complete_norm->SaveAs(plotName.c_str());
+    cout << "Saved plot: " << plotName << endl;
+
+    // Plot 24: Comparison of raw vs normalized
+    TCanvas *c_comparison = new TCanvas("c_comparison", "Raw vs Normalized Comparison", 1600, 800);
+    c_comparison->Divide(2,1);
+    
+    c_comparison->cd(1);
+    h_low_pe_signal->SetTitle("Raw Counts");
+    h_low_pe_signal->Draw("HIST");
+    h_scaled_sideband->Draw("HIST SAME");
+    h_michel_background_predicted->Draw("HIST SAME");
+    h_final_subtracted->Draw("HIST SAME");
+    
+    TLegend *leg_comp1 = new TLegend(0.5, 0.6, 0.9, 0.9);
+    leg_comp1->SetTextSize(0.025);
+    leg_comp1->AddEntry(h_low_pe_signal, Form("Signal: %.0f events", signal_events), "l");
+    leg_comp1->AddEntry(h_scaled_sideband, Form("Scaled bkg: %.1f events", scaled_sideband_events), "l");
+    leg_comp1->AddEntry(h_michel_background_predicted, Form("Michel: %.1f events", predicted_michels), "l");
+    leg_comp1->AddEntry(h_final_subtracted, Form("Final: %.1f events", final_subtracted_corrected), "l");
+    leg_comp1->Draw();
+    
+    c_comparison->cd(2);
+    h_low_pe_signal_norm->SetTitle("Normalized (Counts per Day)");
+    h_low_pe_signal_norm->Draw("HIST");
+    h_scaled_sideband_norm->Draw("HIST SAME");
+    h_michel_background_predicted_norm->Draw("HIST SAME");
+    h_final_subtracted_norm->Draw("HIST SAME");
+    
+    TLegend *leg_comp2 = new TLegend(0.5, 0.6, 0.9, 0.9);
+    leg_comp2->SetTextSize(0.025);
+    leg_comp2->AddEntry(h_low_pe_signal_norm, Form("Signal: %.1f/day", calculateTotalEvents(h_low_pe_signal_norm)), "l");
+    leg_comp2->AddEntry(h_scaled_sideband_norm, Form("Scaled bkg: %.1f/day", calculateTotalEvents(h_scaled_sideband_norm)), "l");
+    leg_comp2->AddEntry(h_michel_background_predicted_norm, Form("Michel: %.1f/day", predicted_michels / liveTimeDays), "l");
+    leg_comp2->AddEntry(h_final_subtracted_norm, Form("Final: %.1f/day", final_subtracted_corrected / liveTimeDays), "l");
+    leg_comp2->AddEntry((TObject*)0, Form("Total live time: %.6f days", liveTimeDays), "");
+    leg_comp2->Draw();
+    
+    plotName = OUTPUT_DIR + "/Raw_vs_Normalized_Comparison.png";
+    c_comparison->SaveAs(plotName.c_str());
+    cout << "Saved plot: " << plotName << endl;
+
+    // Clean up
+    delete c_main;
+    delete c_sideband;
+    delete c_sideband_complete;
+    delete c_sideband_norm;
+    delete c_sideband_complete_norm;
+    delete c_comparison;
+    delete leg_sideband;
+    delete leg_sideband_complete;
+    delete leg_sideband_norm;
+    delete leg_sideband_complete_norm;
+    delete leg_comp1;
+    delete leg_comp2;
+
+    if (expFit) delete expFit;
+    if (expFit_low_muon) delete expFit_low_muon;
+    if (expFit_high_muon) delete expFit_high_muon;
+
     // Save all histograms to ROOT file
-    saveAllHistogramsToRootFile(rootFile.get(),
+    saveAllHistogramsToRootFile(rootFile, 
                                h_muon_energy, h_muon_all, h_michel_energy, 
                                h_dt_michel, h_energy_vs_dt, h_side_vp_muon, 
                                h_top_vp_muon, h_trigger_bits, h_isolated_pe, 
@@ -1896,61 +1997,59 @@ int main(int argc, char *argv[]) {
                                h_scaled_sideband, h_michel_background_predicted,
                                h_final_subtracted, h_low_pe_signal_norm,
                                h_low_pe_sideband_norm, h_scaled_sideband_norm,
-                               h_michel_background_predicted_norm, h_final_subtracted_norm,
-                               h_peak_position_rms, h_good_vs_bad);
+                               h_michel_background_predicted_norm, h_final_subtracted_norm);
 
     // Close ROOT file
     rootFile->Close();
+    delete rootFile;
 
     // Clean up memory
-    #define SAFE_DELETE(ptr) if (ptr) { delete ptr; ptr = nullptr; }
-    
-    SAFE_DELETE(h_muon_energy);
-    SAFE_DELETE(h_muon_all);
-    SAFE_DELETE(h_michel_energy);
-    SAFE_DELETE(h_dt_michel);
-    SAFE_DELETE(h_energy_vs_dt);
-    SAFE_DELETE(h_side_vp_muon);
-    SAFE_DELETE(h_top_vp_muon);
-    SAFE_DELETE(h_trigger_bits);
-    SAFE_DELETE(h_isolated_pe);
-    SAFE_DELETE(h_low_iso);
-    SAFE_DELETE(h_high_iso);
-    SAFE_DELETE(h_dt_prompt_delayed);
-    SAFE_DELETE(h_dt_low_muon);
-    SAFE_DELETE(h_dt_high_muon);
-    SAFE_DELETE(h_low_pe_signal);
-    SAFE_DELETE(h_low_pe_sideband);
-    SAFE_DELETE(h_isolated_ge40);
+    delete h_muon_energy;
+    delete h_muon_all;
+    delete h_michel_energy;
+    delete h_dt_michel;
+    delete h_energy_vs_dt;
+    delete h_side_vp_muon;
+    delete h_top_vp_muon;
+    delete h_trigger_bits;
+    delete h_isolated_pe;
+    delete h_low_iso;
+    delete h_high_iso;
+    delete h_dt_prompt_delayed;
+    delete h_dt_low_muon;
+    delete h_dt_high_muon;
+    delete h_low_pe_signal;
+    delete h_low_pe_sideband;
+    delete h_isolated_ge40;
+    delete h_dt_michel_sideband;
+    delete h_michel_energy_fit_range;
+    delete h_peak_position_rms;
+    delete h_good_vs_bad;
+    delete h_neutron_richness;
+    delete h_signal_significance;
+    delete h_energy_vs_time_low;
+    delete h_energy_vs_time_high;
+    delete h_michel_energy_predicted;
+    delete h_scaled_sideband;
+    delete h_michel_background_predicted;
+    delete h_final_subtracted;
+    delete h_low_pe_signal_norm;
+    delete h_low_pe_sideband_norm;
+    delete h_scaled_sideband_norm;
+    delete h_michel_background_predicted_norm;
+    delete h_final_subtracted_norm;
     
     for (int i = 0; i < 10; i++) {
-        SAFE_DELETE(h_veto_panel[i]);
+        delete h_veto_panel[i];
     }
-    
-    SAFE_DELETE(h_dt_michel_sideband);
-    SAFE_DELETE(h_michel_energy_fit_range);
-    SAFE_DELETE(h_michel_energy_predicted);
-    SAFE_DELETE(h_scaled_sideband);
-    SAFE_DELETE(h_michel_background_predicted);
-    SAFE_DELETE(h_final_subtracted);
-    
-    SAFE_DELETE(h_neutron_richness);
-    SAFE_DELETE(h_signal_significance);
-    SAFE_DELETE(h_energy_vs_time_low);
-    SAFE_DELETE(h_energy_vs_time_high);
-    SAFE_DELETE(h_peak_position_rms);
-    SAFE_DELETE(h_good_vs_bad);
-    
-    SAFE_DELETE(h_low_pe_signal_norm);
-    SAFE_DELETE(h_low_pe_sideband_norm);
-    SAFE_DELETE(h_scaled_sideband_norm);
-    SAFE_DELETE(h_michel_background_predicted_norm);
-    SAFE_DELETE(h_final_subtracted_norm);
-    
-    #undef SAFE_DELETE
 
-    cout << "Analysis complete. Results saved in " << OUTPUT_DIR << "/ (*.png, *.csv, *.txt, *.root)" << endl;
-    cout << "Summary of noise mitigation results:" << endl;
+    cout << "Analysis complete. Results saved in " << OUTPUT_DIR << "/" << endl;
+    cout << "  - PNG plots in: " << OUTPUT_DIR << "/" << endl;
+    cout << "  - ROOT file: " << rootFileName << endl;
+    cout << "  - CSV files: CosmicFlux_AllHours.csv, CosmicFlux_AllDays.csv" << endl;
+    cout << "  - Text summary: LiveTime_Info.txt" << endl;
+    
+    cout << "\nSummary of noise mitigation results:" << endl;
     cout << "  - Total saturated events removed: " << total_saturated_events << endl;
     cout << "  - Total good events after quality cuts: " << total_good_events << endl;
     cout << "  - Peak position RMS cut: " << PEAK_POSITION_RMS_CUT << endl;
