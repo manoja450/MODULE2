@@ -5,7 +5,7 @@ sbatch Micheltest.slurm
 
 **COMPILE IN COMPUTE NODE:******
 
-srun --partition=longjobs --time=10:30:00 --mem=10G --cpus-per-task=1 --pty bash
+srun --partition=longjobs --time=1:30:00 --mem=10G --cpus-per-task=1 --pty bash
 
 # First, set up ROOT environment
 export LD_LIBRARY_PATH=/usr/lib64/root:$LD_LIBRARY_PATH
