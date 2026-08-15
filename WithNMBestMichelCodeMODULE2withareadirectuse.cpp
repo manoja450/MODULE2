@@ -1,3 +1,4 @@
+//stores output in a root file
 #include <TFile.h>
 #include <TTree.h>
 #include <TBranch.h>
