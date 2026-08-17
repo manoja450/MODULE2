@@ -16,7 +16,9 @@ ROOT_LIBS=$(root-config --libs)
 
 # Compile - ALL ON ONE LINE!
 g++ -O2 -o Micheltest BestMichelCodeMODULE2withareadirectuse1.cpp ${ROOT_CFLAGS} ${ROOT_LIBS} -Wl,-rpath,/usr/lib64/root -std=c++17
+
+
 **ON ROOT:**
- TCanvas *c1 = new TCanvas("c1","Michel Electron Energy",800,600);
-root [3] michel_energy->Draw();
-root [4] c1->SaveAs("michel_energy.png");
+TCanvas *c1 = new TCanvas("c1","Michel Electron Energy",800,600);
+ michel_energy->Draw();
+ c1->SaveAs("michel_energy.png");
