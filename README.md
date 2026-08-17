@@ -20,5 +20,7 @@ g++ -O2 -o Micheltest BestMichelCodeMODULE2withareadirectuse1.cpp ${ROOT_CFLAGS}
 
 **ON ROOT:**
 TCanvas *c1 = new TCanvas("c1","Michel Electron Energy",800,600);
+
  michel_energy->Draw();
- c1->SaveAs("michel_energy.png");
+ 
+c1->SaveAs("michel_energy.png");
